@@ -9,6 +9,7 @@ class VehicleLogPage extends StatefulWidget {
 }
 
 class _VehicleLogPageState extends State<VehicleLogPage> {
+  DateTime _selectedMonth = DateTime.now();
   late Future<List<dynamic>> _logsFuture;
 
   @override
@@ -17,12 +18,88 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
     _refresh();
   }
 
+  DateTime get _startOfSelectedMonth =>
+      DateTime(_selectedMonth.year, _selectedMonth.month, 1);
+
+  DateTime get _startOfNextMonth =>
+      DateTime(_selectedMonth.year, _selectedMonth.month + 1, 1);
+
+  void _changeMonth(int delta) {
+    setState(() {
+      _selectedMonth = DateTime(
+        _selectedMonth.year,
+        _selectedMonth.month + delta,
+        1,
+      );
+      _refresh();
+    });
+  }
+
   void _refresh() {
     _logsFuture = Supabase.instance.client
         .from('vehicle_logs')
         .select()
+        .gte('log_date', _startOfSelectedMonth.toIso8601String())
+        .lt('log_date', _startOfNextMonth.toIso8601String())
         .order('log_date', ascending: false);
+
     setState(() {});
+  }
+
+  Future<Map<String, int>> _fetchMonthlyTotals() async {
+    final data = await Supabase.instance.client
+        .from('vehicle_logs')
+        .select('distance_km, is_business')
+        .gte('log_date', _startOfSelectedMonth.toIso8601String())
+        .lt('log_date', _startOfNextMonth.toIso8601String());
+
+    int businessKm = 0;
+    int privateKm = 0;
+
+    for (final row in data) {
+      final km = row['distance_km'] ?? 0;
+      if (row['is_business'] == true) {
+        businessKm += km as int;
+      } else {
+        privateKm += km as int;
+      }
+    }
+
+    return {'business': businessKm, 'private': privateKm};
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchVehicleMonthlyTotals() async {
+    final data = await Supabase.instance.client
+        .from('vehicle_logs')
+        .select('vehicle_name, distance_km, is_business')
+        .gte('log_date', _startOfSelectedMonth.toIso8601String())
+        .lt('log_date', _startOfNextMonth.toIso8601String());
+
+    final Map<String, Map<String, int>> totals = {};
+
+    for (final row in data) {
+      final vehicle = row['vehicle_name'] as String;
+      final km = (row['distance_km'] ?? 0) as int;
+      final isBusiness = row['is_business'] == true;
+
+      totals.putIfAbsent(vehicle, () => {'business': 0, 'private': 0});
+
+      if (isBusiness) {
+        totals[vehicle]!['business'] = totals[vehicle]!['business']! + km;
+      } else {
+        totals[vehicle]!['private'] = totals[vehicle]!['private']! + km;
+      }
+    }
+
+    return totals.entries
+        .map(
+          (e) => {
+            'vehicle': e.key,
+            'business': e.value['business'],
+            'private': e.value['private'],
+          },
+        )
+        .toList();
   }
 
   @override
@@ -43,42 +120,145 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
           }
         },
       ),
-      body: FutureBuilder<List<dynamic>>(
-        future: _logsFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text(snapshot.error.toString()));
-          }
-
-          final logs = snapshot.data!;
-          if (logs.isEmpty) {
-            return const Center(child: Text('No vehicle logs yet'));
-          }
-
-          return ListView.builder(
-            itemCount: logs.length,
-            itemBuilder: (context, index) {
-              final log = logs[index];
-              return ListTile(
-                title: Text(log['vehicle_name']),
-                subtitle: Text(
-                  'Start ${log['start_km'] ?? '-'} → End ${log['end_km']} '
-                  '(${log['distance_km'] ?? 0} km)',
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: () => _changeMonth(-1),
                 ),
-                trailing: Chip(
-                  label: Text(log['is_business'] ? 'Business' : 'Private'),
+                Text(
+                  '${_selectedMonth.year}-${_selectedMonth.month.toString().padLeft(2, '0')}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed: () => _changeMonth(1),
+                ),
+              ],
+            ),
+          ),
+          FutureBuilder<Map<String, int>>(
+            future: _fetchMonthlyTotals(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: LinearProgressIndicator(),
+                );
+              }
+
+              final totals = snapshot.data!;
+              return Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    Column(
+                      children: [
+                        const Text(
+                          'Business KM',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        Text('${totals['business']}'),
+                      ],
+                    ),
+                    Column(
+                      children: [
+                        const Text(
+                          'Private KM',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        Text('${totals['private']}'),
+                      ],
+                    ),
+                  ],
                 ),
               );
             },
-          );
-        },
+          ),
+          // inserted here
+          FutureBuilder<List<Map<String, dynamic>>>(
+            future: _fetchVehicleMonthlyTotals(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const SizedBox.shrink();
+              }
+
+              final rows = snapshot.data!;
+              if (rows.isEmpty) {
+                return const SizedBox.shrink();
+              }
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: rows.map((row) {
+                    return Card(
+                      child: ListTile(
+                        title: Text(row['vehicle']),
+                        subtitle: Text(
+                          'Business: ${row['business']} km  •  '
+                          'Private: ${row['private']} km',
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              );
+            },
+          ),
+
+          // to here
+          Expanded(
+            child: FutureBuilder<List<dynamic>>(
+              future: _logsFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Center(child: Text(snapshot.error.toString()));
+                }
+
+                final logs = snapshot.data!;
+                if (logs.isEmpty) {
+                  return const Center(child: Text('No vehicle logs yet'));
+                }
+
+                return ListView.builder(
+                  itemCount: logs.length,
+                  itemBuilder: (context, index) {
+                    final log = logs[index];
+                    return ListTile(
+                      title: Text(log['vehicle_name']),
+                      subtitle: Text(
+                        'Start ${log['start_km'] ?? '-'} → End ${log['end_km']} '
+                        '(${log['distance_km'] ?? 0} km)',
+                      ),
+                      trailing: Chip(
+                        label: Text(
+                          log['is_business'] ? 'Business' : 'Private',
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
 }
+
+/* ---------------- ADD LOG SHEET ---------------- */
 
 class _AddVehicleLogSheet extends StatefulWidget {
   const _AddVehicleLogSheet();
@@ -108,16 +288,13 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
   Future<void> _loadVehicles() async {
     final data = await Supabase.instance.client
         .from('vehicle_logs')
-        .select('vehicle_name')
-        .order('vehicle_name');
-
-    final names = data
-        .map<String>((e) => e['vehicle_name'] as String)
-        .toSet()
-        .toList();
+        .select('vehicle_name');
 
     setState(() {
-      _vehicles = names;
+      _vehicles = data
+          .map<String>((e) => e['vehicle_name'] as String)
+          .toSet()
+          .toList();
     });
   }
 
@@ -130,13 +307,20 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
         .order('end_km', ascending: false)
         .limit(1);
 
-    if (data.isNotEmpty && data.first['end_km'] != null) {
+    if (data.isNotEmpty) {
       _startKmController.text = data.first['end_km'].toString();
-    } else {
-      _startKmController.clear();
     }
   }
 
+  // insert new code below
+  bool get _canSave {
+    if (_isAddingNewVehicle) {
+      return _newVehicleController.text.trim().isNotEmpty;
+    }
+    return _selectedVehicle != null;
+  }
+
+  //insert new code above
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -154,10 +338,7 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
               'Add Vehicle Log',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 16),
-
             DropdownButtonFormField<String>(
-              value: _selectedVehicle,
               hint: const Text('Select vehicle'),
               items: [
                 ..._vehicles.map(
@@ -170,11 +351,7 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
               ],
               onChanged: (value) async {
                 if (value == '__new__') {
-                  setState(() {
-                    _isAddingNewVehicle = true;
-                    _selectedVehicle = null;
-                    _startKmController.clear();
-                  });
+                  setState(() => _isAddingNewVehicle = true);
                 } else {
                   setState(() {
                     _isAddingNewVehicle = false;
@@ -184,7 +361,6 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
                 }
               },
             ),
-
             if (_isAddingNewVehicle)
               TextField(
                 controller: _newVehicleController,
@@ -192,76 +368,82 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
                   labelText: 'New vehicle name',
                 ),
               ),
-
             TextField(
               controller: _startKmController,
               decoration: const InputDecoration(labelText: 'Start KM'),
               keyboardType: TextInputType.number,
             ),
-
             TextField(
               controller: _endKmController,
               decoration: const InputDecoration(labelText: 'End KM'),
               keyboardType: TextInputType.number,
             ),
-
             TextField(
               controller: _descriptionController,
               decoration: const InputDecoration(labelText: 'Description'),
             ),
-
             SwitchListTile(
               title: Text(_isBusiness ? 'Business use' : 'Private use'),
-              subtitle: Text(
-                _isBusiness
-                    ? 'This trip will count toward business kilometres'
-                    : 'This trip will be recorded as private use',
-              ),
               value: _isBusiness,
               onChanged: (v) => setState(() => _isBusiness = v),
             ),
-
-            const SizedBox(height: 16),
-
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.pop(context, false);
-                    },
+                    onPressed: () => Navigator.pop(context, false),
                     child: const Text('Cancel'),
                   ),
                 ),
                 const SizedBox(width: 12),
+                // below here
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: _saving
+                    onPressed: (_saving || !_canSave)
                         ? null
                         : () async {
                             setState(() => _saving = true);
 
                             final vehicleName = _isAddingNewVehicle
-                                ? _newVehicleController.text
+                                ? _newVehicleController.text.trim()
                                 : _selectedVehicle;
 
-                            await Supabase.instance.client
-                                .from('vehicle_logs')
-                                .insert({
-                                  'vehicle_name': vehicleName,
-                                  'start_km': int.tryParse(
-                                    _startKmController.text.trim(),
-                                  ),
-                                  'end_km': int.tryParse(
-                                    _endKmController.text.trim(),
-                                  ),
-                                  'description': _descriptionController.text,
-                                  'log_date': DateTime.now().toIso8601String(),
-                                  'is_business': _isBusiness,
-                                });
+                            try {
+                              print('Attempting to save vehicle log...');
 
-                            if (context.mounted) {
-                              Navigator.pop(context, true);
+                              await Supabase.instance.client
+                                  .from('vehicle_logs')
+                                  .insert({
+                                    'vehicle_name': vehicleName,
+                                    'start_km': int.tryParse(
+                                      _startKmController.text,
+                                    ),
+                                    'end_km': int.tryParse(
+                                      _endKmController.text,
+                                    ),
+                                    'description': _descriptionController.text,
+                                    'log_date': DateTime.now()
+                                        .toIso8601String(),
+                                    'is_business': _isBusiness,
+                                  });
+
+                              print('Vehicle log saved successfully');
+
+                              if (context.mounted) {
+                                Navigator.pop(context, true);
+                              }
+                            } catch (e) {
+                              print('ERROR saving vehicle log: $e');
+
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(e.toString())),
+                                );
+                              }
+                            } finally {
+                              if (mounted) {
+                                setState(() => _saving = false);
+                              }
                             }
                           },
                     child: _saving
@@ -269,9 +451,9 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
                         : const Text('Save'),
                   ),
                 ),
+                // above here
               ],
             ),
-            const SizedBox(height: 16),
           ],
         ),
       ),

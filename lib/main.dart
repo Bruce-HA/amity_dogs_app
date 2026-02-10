@@ -14,12 +14,6 @@ Future<void> main() async {
     anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
   );
 
-  await Supabase.initialize(
-    url: 'https://phkwizyrpfzoecugpshb.supabase.co',
-    anonKey:
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoa3dpenlycGZ6b2VjdWdwc2hiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzNjYyODIsImV4cCI6MjA4NDk0MjI4Mn0.ScSHlVVB83GFDCsUXTyjj_3r2Bde2gvFLE5zEJKbRJ8',
-  );
-
   runApp(const AmityDogsApp());
 }
 
