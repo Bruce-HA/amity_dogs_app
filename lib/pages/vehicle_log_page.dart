@@ -45,6 +45,21 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
     });
   }
 
+  // just add below
+  pw.Widget _pdfCell(String text, {bool bold = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.all(4),
+      child: pw.Text(
+        text,
+        style: pw.TextStyle(
+          fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+          fontSize: 9,
+        ),
+      ),
+    );
+  }
+
+  // just added above
   void _refresh() {
     _logsFuture = Supabase.instance.client
         .from('vehicle_logs')
@@ -125,9 +140,51 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
         .toList();
   }
 
+  Future<String?> _selectVehicleForPdf() async {
+    final data = await Supabase.instance.client
+        .from('vehicle_logs')
+        .select('vehicle_name')
+        .gte('log_date', _startOfSelectedMonth.toIso8601String())
+        .lt('log_date', _startOfNextMonth.toIso8601String());
+
+    final vehicles = data
+        .map<String>((e) => e['vehicle_name'] as String)
+        .toSet()
+        .toList();
+
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Select Vehicle'),
+          content: SizedBox(
+            width: 300,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                ListTile(
+                  title: const Text('All Vehicles'),
+                  onTap: () => Navigator.pop(context, null),
+                ),
+                ...vehicles.map(
+                  (v) => ListTile(
+                    title: Text(v),
+                    onTap: () => Navigator.pop(context, v),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   // delete code below here
   Future<void> _exportMonthlyPdf() async {
     print('PDF EXPORT STARTED');
+
+    final selectedVehicle = await _selectVehicleForPdf();
 
     final ttf = await rootBundle.load('assets/fonts/Roboto-Regular.ttf');
     final font = pw.Font.ttf(ttf);
@@ -135,74 +192,119 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
     final pdf = pw.Document(theme: pw.ThemeData.withFont(base: font));
 
     final totals = await _fetchMonthlyTotals();
-    final logs = await _fetchMonthlyLogsForPdf();
+    var query = Supabase.instance.client
+        .from('vehicle_logs')
+        .select() // MUST come first in your version
+        .gte('log_date', _startOfSelectedMonth.toIso8601String())
+        .lt('log_date', _startOfNextMonth.toIso8601String());
+
+    if (selectedVehicle != null) {
+      query = query.eq('vehicle_name', selectedVehicle);
+    }
+
+    final logs = await query.order('log_date');
 
     final logoBytes = await rootBundle.load('assets/images/amity_logo.png');
     final logo = pw.MemoryImage(logoBytes.buffer.asUint8List());
 
     pdf.addPage(
       pw.MultiPage(
+        footer: (context) => pw.Align(
+          alignment: pw.Alignment.centerRight,
+          child: pw.Text(
+            'Page ${context.pageNumber} of ${context.pagesCount}',
+            style: const pw.TextStyle(fontSize: 10),
+          ),
+        ),
         build: (context) => [
-          pw.Image(logo, height: 50),
-          pw.SizedBox(height: 16),
-
           pw.Text(
             'Vehicle Log Report',
-            style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+            style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
           ),
 
-          pw.Text(
-            '${_selectedMonth.year}-${_selectedMonth.month.toString().padLeft(2, '0')}',
-          ),
+          pw.SizedBox(height: 6),
 
-          pw.SizedBox(height: 20),
+          pw.Text('Month: ${DateFormat('MMMM yyyy').format(_selectedMonth)}'),
 
-          ...logs.map((log) {
-            return pw.Container(
-              padding: const pw.EdgeInsets.all(8),
-              margin: const pw.EdgeInsets.only(bottom: 8),
-              decoration: pw.BoxDecoration(border: pw.Border.all(width: 0.5)),
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
+          pw.SizedBox(height: 16),
+
+          pw.Table(
+            border: pw.TableBorder.all(width: 0.5),
+            columnWidths: {
+              0: const pw.FixedColumnWidth(65), // Date
+              1: const pw.FixedColumnWidth(90), // Driver
+              2: const pw.FixedColumnWidth(70), // Vehicle
+              3: const pw.FixedColumnWidth(50), // Start
+              4: const pw.FixedColumnWidth(50), // End
+              5: const pw.FixedColumnWidth(55), // KM
+              6: const pw.FixedColumnWidth(55), // Use
+            },
+            children: [
+              /// HEADER ROW
+              pw.TableRow(
+                decoration: const pw.BoxDecoration(color: PdfColors.grey300),
                 children: [
-                  pw.Text(
-                    'Driver: ${log['driver_name'] ?? 'Unknown'}',
-                    style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                  ),
-                  pw.Text('Vehicle: ${log['vehicle_name']}'),
-                  pw.Text(
-                    'Date: ${DateFormat('dd MMM yyyy').format(DateTime.parse(log['log_date']))}',
-                  ),
-                  pw.Text(
-                    'KM: ${log['start_km']} - ${log['end_km']} (${log['distance_km']} km)',
-                  ),
-                  pw.Text(
-                    'Use: ${log['is_business'] ? 'Business' : 'Private'}',
-                  ),
-                  if (log['description'] != null &&
-                      log['description'].toString().isNotEmpty)
-                    pw.Text('Notes: ${log['description']}'),
+                  _pdfCell('Date', bold: true),
+                  _pdfCell('Driver', bold: true),
+                  _pdfCell('Vehicle', bold: true),
+                  _pdfCell('Start', bold: true),
+                  _pdfCell('End', bold: true),
+                  _pdfCell('KM', bold: true),
+                  _pdfCell('Use', bold: true),
                 ],
               ),
-            );
-          }).toList(),
+
+              /// DATA ROWS
+              ...logs.map((log) {
+                final tripDate =
+                    DateTime.tryParse(log['log_date'] ?? '') ?? DateTime.now();
+
+                return pw.TableRow(
+                  children: [
+                    _pdfCell(DateFormat('dd/MM/yyyy').format(tripDate)),
+                    _pdfCell(log['driver_name'] ?? 'Unknown'),
+                    _pdfCell(log['vehicle_name']),
+                    _pdfCell(log['start_km'].toString()),
+                    _pdfCell(log['end_km'].toString()),
+                    _pdfCell(log['distance_km'].toString()),
+                    _pdfCell(log['is_business'] ? 'Business' : 'Private'),
+                  ],
+                );
+              }).toList(),
+            ],
+          ),
 
           pw.SizedBox(height: 20),
+
+          pw.Divider(),
+
+          pw.SizedBox(height: 10),
 
           pw.Text(
             'Monthly Totals',
             style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
           ),
 
+          pw.SizedBox(height: 6),
+
           pw.Text('Business KM: ${totals['business']}'),
           pw.Text('Private KM: ${totals['private']}'),
 
-          pw.SizedBox(height: 40),
+          pw.SizedBox(height: 30),
 
-          pw.Text('Driver Signature: ____________________________'),
+          pw.Divider(),
+
+          pw.SizedBox(height: 20),
+
+          pw.Text('Driver Signature: ________________________________'),
+
+          pw.SizedBox(height: 8),
+
+          pw.Text('Date: ____________________'),
         ],
       ),
     );
+
     final bytes = await pdf.save();
 
     final dir = await getApplicationDocumentsDirectory();
