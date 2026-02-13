@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'home_page.dart';
 import 'pages/vehicle_log_page.dart';
+import 'login_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,7 +26,9 @@ class AmityDogsApp extends StatelessWidget {
     return MaterialApp(
       title: 'Amity Dogs',
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
-      home: const VehicleLogPage(),
+      home: Supabase.instance.client.auth.currentUser == null
+          ? const LoginPage()
+          : const VehicleLogPage(),
     );
   }
 }

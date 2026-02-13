@@ -1,5 +1,15 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:pdf/pdf.dart';
+import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
+import '../login_page.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:printing/printing.dart';
 
 class VehicleLogPage extends StatefulWidget {
   const VehicleLogPage({super.key});
@@ -68,6 +78,17 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
     return {'business': businessKm, 'private': privateKm};
   }
 
+  Future<List<Map<String, dynamic>>> _fetchMonthlyLogsForPdf() async {
+    final data = await Supabase.instance.client
+        .from('vehicle_logs')
+        .select()
+        .gte('log_date', _startOfSelectedMonth.toIso8601String())
+        .lt('log_date', _startOfNextMonth.toIso8601String())
+        .order('log_date', ascending: true);
+
+    return List<Map<String, dynamic>>.from(data);
+  }
+
   Future<List<Map<String, dynamic>>> _fetchVehicleMonthlyTotals() async {
     final data = await Supabase.instance.client
         .from('vehicle_logs')
@@ -75,23 +96,25 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
         .gte('log_date', _startOfSelectedMonth.toIso8601String())
         .lt('log_date', _startOfNextMonth.toIso8601String());
 
-    final Map<String, Map<String, int>> totals = {};
+    final Map<String, Map<String, int>> vehicleTotals = {};
 
     for (final row in data) {
-      final vehicle = row['vehicle_name'] as String;
-      final km = (row['distance_km'] ?? 0) as int;
+      final vehicle = row['vehicle_name'];
+      final km = row['distance_km'] ?? 0;
       final isBusiness = row['is_business'] == true;
 
-      totals.putIfAbsent(vehicle, () => {'business': 0, 'private': 0});
+      vehicleTotals.putIfAbsent(vehicle, () => {'business': 0, 'private': 0});
 
       if (isBusiness) {
-        totals[vehicle]!['business'] = totals[vehicle]!['business']! + km;
+        vehicleTotals[vehicle]!['business'] =
+            vehicleTotals[vehicle]!['business']! + (km as int);
       } else {
-        totals[vehicle]!['private'] = totals[vehicle]!['private']! + km;
+        vehicleTotals[vehicle]!['private'] =
+            vehicleTotals[vehicle]!['private']! + (km as int);
       }
     }
 
-    return totals.entries
+    return vehicleTotals.entries
         .map(
           (e) => {
             'vehicle': e.key,
@@ -102,10 +125,132 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
         .toList();
   }
 
+  // delete code below here
+  Future<void> _exportMonthlyPdf() async {
+    print('PDF EXPORT STARTED');
+
+    final ttf = await rootBundle.load('assets/fonts/Roboto-Regular.ttf');
+    final font = pw.Font.ttf(ttf);
+
+    final pdf = pw.Document(theme: pw.ThemeData.withFont(base: font));
+
+    final totals = await _fetchMonthlyTotals();
+    final logs = await _fetchMonthlyLogsForPdf();
+
+    final logoBytes = await rootBundle.load('assets/images/amity_logo.png');
+    final logo = pw.MemoryImage(logoBytes.buffer.asUint8List());
+
+    pdf.addPage(
+      pw.MultiPage(
+        build: (context) => [
+          pw.Image(logo, height: 50),
+          pw.SizedBox(height: 16),
+
+          pw.Text(
+            'Vehicle Log Report',
+            style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+          ),
+
+          pw.Text(
+            '${_selectedMonth.year}-${_selectedMonth.month.toString().padLeft(2, '0')}',
+          ),
+
+          pw.SizedBox(height: 20),
+
+          ...logs.map((log) {
+            return pw.Container(
+              padding: const pw.EdgeInsets.all(8),
+              margin: const pw.EdgeInsets.only(bottom: 8),
+              decoration: pw.BoxDecoration(border: pw.Border.all(width: 0.5)),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(
+                    'Driver: ${log['driver_name'] ?? 'Unknown'}',
+                    style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.Text('Vehicle: ${log['vehicle_name']}'),
+                  pw.Text(
+                    'Date: ${DateFormat('dd MMM yyyy').format(DateTime.parse(log['log_date']))}',
+                  ),
+                  pw.Text(
+                    'KM: ${log['start_km']} - ${log['end_km']} (${log['distance_km']} km)',
+                  ),
+                  pw.Text(
+                    'Use: ${log['is_business'] ? 'Business' : 'Private'}',
+                  ),
+                  if (log['description'] != null &&
+                      log['description'].toString().isNotEmpty)
+                    pw.Text('Notes: ${log['description']}'),
+                ],
+              ),
+            );
+          }).toList(),
+
+          pw.SizedBox(height: 20),
+
+          pw.Text(
+            'Monthly Totals',
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          ),
+
+          pw.Text('Business KM: ${totals['business']}'),
+          pw.Text('Private KM: ${totals['private']}'),
+
+          pw.SizedBox(height: 40),
+
+          pw.Text('Driver Signature: ____________________________'),
+        ],
+      ),
+    );
+    final bytes = await pdf.save();
+
+    final dir = await getApplicationDocumentsDirectory();
+
+    final file = File(
+      '${dir.path}/Vehicle_Log_${_selectedMonth.year}-${_selectedMonth.month.toString().padLeft(2, '0')}.pdf',
+    );
+
+    await file.writeAsBytes(bytes);
+
+    await OpenFilex.open(file.path);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Vehicle Log')),
+      //appBar: AppBar(title: const Text('Vehicle Log')),
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Image.asset('assets/images/amity_logo.png', height: 32),
+            const SizedBox(width: 12),
+            const Text('Vehicle Log'),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf),
+            onPressed: _exportMonthlyPdf,
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await Supabase.instance.client.auth.signOut();
+
+              if (mounted) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (_) => LoginPage()),
+
+                  (route) => false,
+                );
+              }
+            },
+          ),
+        ],
+      ),
+      // end of insert
       floatingActionButton: FloatingActionButton(
         child: const Icon(Icons.add),
         onPressed: () async {
@@ -214,7 +359,6 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
             },
           ),
 
-          // to here
           Expanded(
             child: FutureBuilder<List<dynamic>>(
               future: _logsFuture,
@@ -235,18 +379,41 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
                   itemCount: logs.length,
                   itemBuilder: (context, index) {
                     final log = logs[index];
+                    // insert below here
                     return ListTile(
                       title: Text(log['vehicle_name']),
-                      subtitle: Text(
-                        'Start ${log['start_km'] ?? '-'} → End ${log['end_km']} '
-                        '(${log['distance_km'] ?? 0} km)',
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Driver: ${log['driver_name'] ?? 'Unknown'}',
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                          Text(
+                            'Start ${log['start_km']} → End ${log['end_km']} '
+                            '  •  Distance: ${log['distance_km']} km',
+                          ),
+                          if ((log['description'] ?? '').toString().isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                log['description'],
+                                style: const TextStyle(
+                                  fontStyle: FontStyle.italic,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
+
                       trailing: Chip(
                         label: Text(
                           log['is_business'] ? 'Business' : 'Private',
                         ),
                       ),
                     );
+                    // Replace above here
                   },
                 );
               },
@@ -258,6 +425,7 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
   }
 }
 
+/* ---------------- ADD LOG SHEET ---------------- */
 /* ---------------- ADD LOG SHEET ---------------- */
 
 class _AddVehicleLogSheet extends StatefulWidget {
@@ -312,15 +480,62 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
     }
   }
 
-  // insert new code below
-  bool get _canSave {
-    if (_isAddingNewVehicle) {
-      return _newVehicleController.text.trim().isNotEmpty;
+  Future<void> _saveLog() async {
+    setState(() => _saving = true);
+
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+
+      final startKm = int.tryParse(_startKmController.text.trim()) ?? 0;
+      final endKm = int.tryParse(_endKmController.text.trim()) ?? 0;
+
+      if (endKm <= startKm) {
+        throw Exception('End KM must be greater than Start KM');
+      }
+
+      final distance = endKm - startKm;
+
+      final vehicleName = _isAddingNewVehicle
+          ? _newVehicleController.text.trim()
+          : _selectedVehicle;
+
+      if (vehicleName == null || vehicleName.isEmpty) {
+        throw Exception('Please select or enter a vehicle');
+      }
+
+      final driverName =
+          user?.userMetadata?['full_name'] ?? user?.email ?? 'Unknown';
+
+      print('Current user: $user');
+
+      await Supabase.instance.client.from('vehicle_logs').insert({
+        'vehicle_name': vehicleName,
+        'start_km': startKm,
+        'end_km': endKm,
+        'distance_km': distance,
+        'description': _descriptionController.text.trim(),
+        'log_date': DateTime.now().toIso8601String(),
+        'is_business': _isBusiness,
+        'driver_id': user?.id,
+        'driver_name': driverName,
+      });
+
+      if (mounted) {
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
     }
-    return _selectedVehicle != null;
   }
 
-  //insert new code above
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -338,7 +553,10 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
               'Add Vehicle Log',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
+            const SizedBox(height: 16),
+
             DropdownButtonFormField<String>(
+              value: _selectedVehicle,
               hint: const Text('Select vehicle'),
               items: [
                 ..._vehicles.map(
@@ -351,7 +569,11 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
               ],
               onChanged: (value) async {
                 if (value == '__new__') {
-                  setState(() => _isAddingNewVehicle = true);
+                  setState(() {
+                    _isAddingNewVehicle = true;
+                    _selectedVehicle = null;
+                    _startKmController.clear();
+                  });
                 } else {
                   setState(() {
                     _isAddingNewVehicle = false;
@@ -361,6 +583,7 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
                 }
               },
             ),
+
             if (_isAddingNewVehicle)
               TextField(
                 controller: _newVehicleController,
@@ -368,25 +591,32 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
                   labelText: 'New vehicle name',
                 ),
               ),
+
             TextField(
               controller: _startKmController,
               decoration: const InputDecoration(labelText: 'Start KM'),
               keyboardType: TextInputType.number,
             ),
+
             TextField(
               controller: _endKmController,
               decoration: const InputDecoration(labelText: 'End KM'),
               keyboardType: TextInputType.number,
             ),
+
             TextField(
               controller: _descriptionController,
               decoration: const InputDecoration(labelText: 'Description'),
             ),
+
             SwitchListTile(
               title: Text(_isBusiness ? 'Business use' : 'Private use'),
               value: _isBusiness,
               onChanged: (v) => setState(() => _isBusiness = v),
             ),
+
+            const SizedBox(height: 16),
+
             Row(
               children: [
                 Expanded(
@@ -396,64 +626,17 @@ class _AddVehicleLogSheetState extends State<_AddVehicleLogSheet> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                // below here
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: (_saving || !_canSave)
-                        ? null
-                        : () async {
-                            setState(() => _saving = true);
-
-                            final vehicleName = _isAddingNewVehicle
-                                ? _newVehicleController.text.trim()
-                                : _selectedVehicle;
-
-                            try {
-                              print('Attempting to save vehicle log...');
-
-                              await Supabase.instance.client
-                                  .from('vehicle_logs')
-                                  .insert({
-                                    'vehicle_name': vehicleName,
-                                    'start_km': int.tryParse(
-                                      _startKmController.text,
-                                    ),
-                                    'end_km': int.tryParse(
-                                      _endKmController.text,
-                                    ),
-                                    'description': _descriptionController.text,
-                                    'log_date': DateTime.now()
-                                        .toIso8601String(),
-                                    'is_business': _isBusiness,
-                                  });
-
-                              print('Vehicle log saved successfully');
-
-                              if (context.mounted) {
-                                Navigator.pop(context, true);
-                              }
-                            } catch (e) {
-                              print('ERROR saving vehicle log: $e');
-
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(e.toString())),
-                                );
-                              }
-                            } finally {
-                              if (mounted) {
-                                setState(() => _saving = false);
-                              }
-                            }
-                          },
+                    onPressed: _saving ? null : _saveLog,
                     child: _saving
                         ? const CircularProgressIndicator()
                         : const Text('Save'),
                   ),
                 ),
-                // above here
               ],
             ),
+            const SizedBox(height: 16),
           ],
         ),
       ),
