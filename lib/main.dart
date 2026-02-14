@@ -1,9 +1,9 @@
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'home_page.dart';
-import 'pages/vehicle_log_page.dart';
+
 import 'login_page.dart';
+import 'pages/dashboard_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,11 +24,23 @@ class AmityDogsApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Amity Dogs',
+      title: 'Amity Labradoodles',
+
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
-      home: Supabase.instance.client.auth.currentUser == null
-          ? const LoginPage()
-          : const VehicleLogPage(),
+
+      home: StreamBuilder<AuthState>(
+        stream: Supabase.instance.client.auth.onAuthStateChange,
+
+        builder: (context, snapshot) {
+          final session = Supabase.instance.client.auth.currentSession;
+
+          if (session == null) {
+            return LoginPage();
+          } else {
+            return DashboardPage();
+          }
+        },
+      ),
     );
   }
 }
