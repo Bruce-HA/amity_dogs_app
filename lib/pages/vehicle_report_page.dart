@@ -1,13 +1,18 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:intl/intl.dart';
 import 'package:flutter/services.dart' show rootBundle;
+
+import 'package:intl/intl.dart';
+
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+
 import 'package:printing/printing.dart';
 
-import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -31,16 +36,137 @@ class _VehicleReportPageState extends State<VehicleReportPage> {
 
   bool loading = false;
 
-  // ✅ ADD HELPER FUNCTION HERE
+  pw.MemoryImage? logo;
 
-  // ✅ ADD THIS FUNCTION RIGHT HERE
-  Future<pw.MemoryImage> _loadLogo() async {
-    final bytes = await rootBundle.load('assets/images/amity_logo.png');
-
-    return pw.MemoryImage(bytes.buffer.asUint8List());
+  @override
+  void initState() {
+    super.initState();
+    loadLogo();
   }
 
-  // your other functions continue below...
+  Future<void> loadLogo() async {
+    final bytes = await rootBundle.load('assets/images/amity_logo.png');
+
+    logo = pw.MemoryImage(bytes.buffer.asUint8List());
+  }
+
+  // =============================
+  // DATE PICKERS
+  // =============================
+
+  Future<void> pickStartDate() async {
+    final picked = await showDatePicker(
+      context: context,
+
+      initialDate: startDate,
+
+      firstDate: DateTime(2020),
+
+      lastDate: DateTime(2100),
+    );
+
+    if (picked != null) {
+      setState(() {
+        startDate = picked;
+      });
+    }
+  }
+
+  Future<void> pickEndDate() async {
+    final picked = await showDatePicker(
+      context: context,
+
+      initialDate: endDate,
+
+      firstDate: DateTime(2020),
+
+      lastDate: DateTime(2100),
+    );
+
+    if (picked != null) {
+      setState(() {
+        endDate = picked;
+      });
+    }
+  }
+
+  // =============================
+  // LOAD LOG DATA
+  // =============================
+
+  Future<List<Map<String, dynamic>>> loadLogs() async {
+    final builder = supabase
+        .from('vehicle_logs')
+        .select()
+        .eq('vehicle_name', widget.vehicleName)
+        .gte('created_at', startDate.toIso8601String())
+        .lte('created_at', endDate.toIso8601String());
+
+    if (tripFilter == "Business") {
+      builder.eq('is_business', true);
+    }
+
+    if (tripFilter == "Private") {
+      builder.eq('is_business', false);
+    }
+
+    final data = await builder.order('created_at');
+
+    return List<Map<String, dynamic>>.from(data);
+  }
+
+  // =============================
+  // SUPABASE BACKUP
+  // =============================
+
+  Future<void> uploadPdfToSupabase(Uint8List bytes, String filename) async {
+    try {
+      final vehicle = widget.vehicleName.replaceAll(" ", "");
+
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+
+      final safeFilename = "${timestamp}_$filename";
+
+      final path = "$vehicle/$safeFilename";
+
+      debugPrint("Uploading to Supabase path: $path");
+
+      await supabase.storage
+          .from('vehicle_reports')
+          .uploadBinary(
+            path,
+            bytes,
+            fileOptions: const FileOptions(
+              contentType: 'application/pdf',
+              upsert: true,
+            ),
+          );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Backup saved successfully"),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("SUPABASE UPLOAD ERROR: $e");
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Backup failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // =============================
+  // EMAIL REPORT
+  // =============================
 
   Future<void> emailPdf(pw.Document pdf) async {
     final bytes = await pdf.save();
@@ -59,21 +185,20 @@ class _VehicleReportPageState extends State<VehicleReportPage> {
 
     final file = File("${dir.path}/$filename");
 
+    await file.parent.create(recursive: true);
+
     await file.writeAsBytes(bytes);
 
-    await Share.shareXFiles(
-      [XFile(file.path)],
+    await uploadPdfToSupabase(bytes, filename);
 
-      subject: "Amity Labradoodles Vehicle Log Report",
-
-      text:
-          "Vehicle: ${widget.vehicleName}\n"
-          "Trip type: $tripFilter\n"
-          "Period: $start to $end",
-    );
+    await Share.shareXFiles([XFile(file.path)], subject: "Vehicle Log Report");
   }
 
-  pw.Widget _cell(String text, {bool bold = false}) {
+  // =============================
+  // PDF CELL
+  // =============================
+
+  pw.Widget cell(String text, {bool bold = false}) {
     return pw.Padding(
       padding: const pw.EdgeInsets.all(4),
       child: pw.Text(
@@ -85,32 +210,14 @@ class _VehicleReportPageState extends State<VehicleReportPage> {
     );
   }
 
-  Future<List<Map<String, dynamic>>> loadLogs() async {
-    final builder = supabase
-        .from('vehicle_logs')
-        .select()
-        .eq('vehicle_name', widget.vehicleName)
-        .gte('created_at', startDate.toIso8601String())
-        .lte('created_at', endDate.toIso8601String());
-
-    // Apply business/private filter safely
-    if (tripFilter == "Business") {
-      builder.eq('is_business', true);
-    } else if (tripFilter == "Private") {
-      builder.eq('is_business', false);
-    }
-
-    final data = await builder.order('created_at');
-
-    return List<Map<String, dynamic>>.from(data);
-  }
+  // =============================
+  // GENERATE PDF
+  // =============================
 
   Future<void> generatePdf() async {
     setState(() => loading = true);
 
     final logs = await loadLogs();
-
-    final logo = await _loadLogo();
 
     int totalKm = 0;
     int businessKm = 0;
@@ -122,54 +229,33 @@ class _VehicleReportPageState extends State<VehicleReportPage> {
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
 
-        margin: const pw.EdgeInsets.all(24),
-
         footer: (context) {
-          return pw.Container(
+          return pw.Align(
             alignment: pw.Alignment.centerRight,
 
-            margin: const pw.EdgeInsets.only(top: 10),
-
             child: pw.Text(
-              "Page ${context.pageNumber} of ${context.pagesCount}",
-
-              style: const pw.TextStyle(fontSize: 10),
+              "Page ${context.pageNumber} "
+              "of ${context.pagesCount}",
             ),
           );
         },
 
         build: (context) {
           return [
-            // LOGO + HEADER
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
 
               children: [
-                pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-
-                  children: [
-                    pw.Text(
-                      "Amity Labradoodles",
-                      style: pw.TextStyle(
-                        fontSize: 22,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-
-                    pw.Text("${widget.vehicleName} Vehicle Log Report"),
-
-                    pw.Text("$tripFilter trips"),
-
-                    pw.Text(
-                      "${DateFormat('dd/MM/yyyy').format(startDate)}"
-                      " to "
-                      "${DateFormat('dd/MM/yyyy').format(endDate)}",
-                    ),
-                  ],
+                pw.Text(
+                  "${widget.vehicleName} "
+                  "Vehicle Report",
+                  style: pw.TextStyle(
+                    fontSize: 22,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
                 ),
 
-                pw.Image(logo, width: 100, height: 100),
+                if (logo != null) pw.Image(logo!, width: 80),
               ],
             ),
 
@@ -178,34 +264,22 @@ class _VehicleReportPageState extends State<VehicleReportPage> {
             pw.Table(
               border: pw.TableBorder.all(),
 
-              columnWidths: {
-                0: const pw.FlexColumnWidth(2),
-                1: const pw.FlexColumnWidth(2),
-                2: const pw.FlexColumnWidth(1),
-                3: const pw.FlexColumnWidth(1),
-                4: const pw.FlexColumnWidth(1),
-                5: const pw.FlexColumnWidth(1),
-                6: const pw.FlexColumnWidth(3),
-              },
-
               children: [
                 pw.TableRow(
-                  decoration: const pw.BoxDecoration(color: PdfColors.grey300),
-
                   children: [
-                    _cell("Date", bold: true),
+                    cell("Date", bold: true),
 
-                    _cell("Driver", bold: true),
+                    cell("Driver", bold: true),
 
-                    _cell("Business", bold: true),
+                    cell("Business", bold: true),
 
-                    _cell("Start", bold: true),
+                    cell("Start", bold: true),
 
-                    _cell("End", bold: true),
+                    cell("End", bold: true),
 
-                    _cell("Distance", bold: true),
+                    cell("Distance", bold: true),
 
-                    _cell("Notes", bold: true),
+                    cell("Notes", bold: true),
                   ],
                 ),
 
@@ -218,31 +292,30 @@ class _VehicleReportPageState extends State<VehicleReportPage> {
 
                   totalKm += distance;
 
-                  if (log['is_business'] == true) {
+                  if (log['is_business'])
                     businessKm += distance;
-                  } else {
+                  else
                     privateKm += distance;
-                  }
 
                   return pw.TableRow(
                     children: [
-                      _cell(
+                      cell(
                         DateFormat(
                           'dd/MM/yyyy',
                         ).format(DateTime.parse(log['created_at'])),
                       ),
 
-                      _cell(log['driver_name'] ?? ""),
+                      cell(log['driver_name'] ?? ""),
 
-                      _cell(log['is_business'] ? "Yes" : "No"),
+                      cell(log['is_business'] ? "Yes" : "No"),
 
-                      _cell(start.toInt().toString()),
+                      cell(start.toString()),
 
-                      _cell(end.toInt().toString()),
+                      cell(end.toString()),
 
-                      _cell(distance.toString()),
+                      cell(distance.toString()),
 
-                      _cell(log['notes'] ?? ""),
+                      cell(log['notes'] ?? ""),
                     ],
                   );
                 }).toList(),
@@ -251,33 +324,11 @@ class _VehicleReportPageState extends State<VehicleReportPage> {
 
             pw.SizedBox(height: 20),
 
-            pw.Container(
-              padding: const pw.EdgeInsets.all(12),
+            pw.Text("Total KM: $totalKm"),
 
-              decoration: pw.BoxDecoration(border: pw.Border.all()),
+            pw.Text("Business KM: $businessKm"),
 
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-
-                children: [
-                  pw.Text(
-                    "ATO Summary",
-                    style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                  ),
-
-                  pw.Text("Total KM: $totalKm"),
-
-                  pw.Text("Business KM: $businessKm"),
-
-                  pw.Text("Private KM: $privateKm"),
-
-                  pw.Text(
-                    "Business Use %: "
-                    "${totalKm == 0 ? 0 : ((businessKm / totalKm) * 100).toStringAsFixed(1)}%",
-                  ),
-                ],
-              ),
-            ),
+            pw.Text("Private KM: $privateKm"),
           ];
         },
       ),
@@ -287,85 +338,57 @@ class _VehicleReportPageState extends State<VehicleReportPage> {
 
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) {
-          return Scaffold(
-            appBar: AppBar(
-              title: const Text("Report Preview"),
 
-              leading: IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () {
-                  Navigator.pop(context);
-                },
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(
+            title: const Text("Report Preview"),
+
+            leading: IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: () => Navigator.pop(context),
+            ),
+          ),
+
+          body: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.email),
+
+                  label: const Text("Email Report"),
+
+                  onPressed: () => emailPdf(pdf),
+                ),
               ),
 
-              actions: [
-                IconButton(
-                  icon: const Icon(Icons.email),
-                  tooltip: "Email Report",
-                  onPressed: () {
-                    emailPdf(pdf);
-                  },
+              Expanded(
+                child: PdfPreview(
+                  build: (format) async => pdf.save(),
+                  canDebug: false,
                 ),
-              ],
-            ),
-
-            body: PdfPreview(
-              build: (format) async {
-                return pdf.save();
-              },
-
-              allowPrinting: false,
-
-              allowSharing: true,
-
-              canChangeOrientation: false,
-
-              canChangePageFormat: false,
-            ),
-          );
-        },
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  Future<void> pickStartDate() async {
-    final picked = await showDatePicker(
-      context: context,
-
-      initialDate: startDate,
-
-      firstDate: DateTime(2020),
-
-      lastDate: DateTime(2100),
-    );
-
-    if (picked != null) {
-      setState(() => startDate = picked);
-    }
-  }
-
-  Future<void> pickEndDate() async {
-    final picked = await showDatePicker(
-      context: context,
-
-      initialDate: endDate,
-
-      firstDate: DateTime(2020),
-
-      lastDate: DateTime(2100),
-    );
-
-    if (picked != null) {
-      setState(() => endDate = picked);
-    }
-  }
+  // =============================
+  // UI
+  // =============================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text("${widget.vehicleName} Report")),
+      appBar: AppBar(
+        title: Text(
+          "${widget.vehicleName} "
+          "Report",
+        ),
+      ),
 
       body: Padding(
         padding: const EdgeInsets.all(16),
@@ -388,38 +411,34 @@ class _VehicleReportPageState extends State<VehicleReportPage> {
                   tripFilter = value.toString();
                 });
               },
-
-              decoration: const InputDecoration(labelText: "Trip Type"),
             ),
 
             const SizedBox(height: 10),
 
             ListTile(
               title: Text(
-                "Start: ${DateFormat('dd/MM/yyyy').format(startDate)}",
+                "Start Date: "
+                "${DateFormat('dd/MM/yyyy').format(startDate)}",
               ),
-
               trailing: const Icon(Icons.calendar_today),
-
               onTap: pickStartDate,
             ),
 
             ListTile(
-              title: Text("End: ${DateFormat('dd/MM/yyyy').format(endDate)}"),
-
+              title: Text(
+                "End Date: "
+                "${DateFormat('dd/MM/yyyy').format(endDate)}",
+              ),
               trailing: const Icon(Icons.calendar_today),
-
               onTap: pickEndDate,
             ),
 
             const SizedBox(height: 20),
 
-            ElevatedButton.icon(
-              icon: const Icon(Icons.picture_as_pdf),
-
-              label: const Text("Generate PDF"),
-
+            ElevatedButton(
               onPressed: loading ? null : generatePdf,
+
+              child: const Text("Generate Report"),
             ),
           ],
         ),
