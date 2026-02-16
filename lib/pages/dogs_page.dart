@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'dog_details_page.dart';
+import 'widgets/dog_status_chips.dart';
 
 class DogsPage extends StatefulWidget {
   const DogsPage({super.key});
@@ -12,226 +14,155 @@ class DogsPage extends StatefulWidget {
 class _DogsPageState extends State<DogsPage> {
   final supabase = Supabase.instance.client;
 
-  final TextEditingController _searchController = TextEditingController();
+  List<Map<String, dynamic>> dogs = [];
 
-  String _selectedType = 'All';
-  List<dynamic> _dogs = [];
-  bool _loading = true;
+  bool loading = true;
+
+  String searchText = '';
 
   @override
   void initState() {
     super.initState();
-    _loadDogs();
+    loadDogs();
   }
 
-  Future<void> _loadDogs() async {
-    setState(() => _loading = true);
+  Future<void> loadDogs() async {
+    setState(() {
+      loading = true;
+    });
 
-    var query = supabase.from('dogs').select();
+    try {
+      final response = await supabase.from('dogs').select().order('dog_name');
 
-    final search = _searchController.text.trim();
-
-    // Search across multiple fields
-    if (search.isNotEmpty) {
-      query = query.or(
-        'dog_name.ilike.%$search%,'
-        'pet_name.ilike.%$search%,'
-        'microchip.ilike.%$search%,'
-        'dog_ala.ilike.%$search%',
-      );
+      dogs = List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      debugPrint('Error loading dogs: $e');
     }
-
-    // Filter by dog_type
-    if (_selectedType != 'All') {
-      query = query.eq('dog_type', _selectedType);
-    }
-
-    final response = await query.order('dog_name', ascending: true);
 
     setState(() {
-      _dogs = response as List<dynamic>;
-      _loading = false;
+      loading = false;
     });
   }
 
-  // ✅ PUT _buildChips HERE (inside class, outside build)
-  List<Widget> _buildChips(Map<String, dynamic> dog) {
-    List<Widget> chips = [];
+  List<Map<String, dynamic>> get filteredDogs {
+    if (searchText.isEmpty) return dogs;
 
-    // 🟢 Desexed
-    if (dog['desexed'] == true) {
-      chips.add(
-        const Chip(label: Text('Desexed'), backgroundColor: Colors.green),
-      );
-    }
+    return dogs.where((dog) {
+      final name = (dog['dog_name'] ?? '').toString().toLowerCase();
 
-    // 🟠 Spay Due
-    if (dog['spay_due'] != null) {
-      final date = DateTime.parse(dog['spay_due']);
-      chips.add(
-        Chip(
-          label: Text('Spay Due ${date.day}/${date.month}/${date.year}'),
-          backgroundColor: Colors.orange.shade200,
+      return name.contains(searchText.toLowerCase());
+    }).toList();
+  }
+
+  void openDog(Map<String, dynamic> dog) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => DogDetailsPage(dogId: dog['id'])),
+    ).then((_) {
+      loadDogs();
+    });
+  }
+
+  Widget buildDogTile(Map<String, dynamic> dog) {
+    final name = dog['dog_name'] ?? '';
+
+    final breed = dog['breed'] ?? '';
+
+    final imageUrl = dog['photo_url'];
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+
+      child: InkWell(
+        onTap: () => openDog(dog),
+
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+
+          child: Row(
+            children: [
+              Container(
+                width: 60,
+                height: 60,
+
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: Colors.grey[200],
+                ),
+
+                clipBehavior: Clip.antiAlias,
+
+                child: imageUrl != null
+                    ? Image.network(imageUrl, fit: BoxFit.cover)
+                    : const Icon(Icons.pets, size: 30, color: Colors.grey),
+              ),
+
+              const SizedBox(width: 12),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+
+                    if (breed.isNotEmpty)
+                      Text(breed, style: TextStyle(color: Colors.grey[600])),
+
+                    DogStatusChips(dog: dog),
+                  ],
+                ),
+              ),
+
+              const Icon(Icons.chevron_right),
+            ],
+          ),
         ),
-      );
-    }
-
-    // 🔵 Dog Status
-    if (dog['dog_status'] != null) {
-      chips.add(
-        Chip(
-          label: Text(dog['dog_status']),
-          backgroundColor: Colors.blue.shade200,
-        ),
-      );
-    }
-
-    // 🟣 Sale Status
-    if (dog['sale_status'] != null) {
-      chips.add(
-        Chip(
-          label: Text(dog['sale_status']),
-          backgroundColor: Colors.purple.shade200,
-        ),
-      );
-    }
-
-    return chips;
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Dogs')),
+
       body: Column(
         children: [
-          // 🔍 Search Field
           Padding(
             padding: const EdgeInsets.all(12),
+
             child: TextField(
-              controller: _searchController,
               decoration: const InputDecoration(
-                hintText: 'Search dog...',
+                hintText: 'Search dogs',
+
                 prefixIcon: Icon(Icons.search),
+
                 border: OutlineInputBorder(),
               ),
-              onChanged: (_) => _loadDogs(),
-            ),
-          ),
 
-          // 🐶 Dog Type Filter
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: DropdownButtonFormField<String>(
-              value: _selectedType,
-              decoration: const InputDecoration(labelText: 'Dog Type'),
-              items:
-                  const [
-                        'All',
-                        'Breeding',
-                        'Pet',
-                        'Guardian',
-                        'Retired',
-                        'Unknown',
-                      ]
-                      .map(
-                        (type) =>
-                            DropdownMenuItem(value: type, child: Text(type)),
-                      )
-                      .toList(),
-              onChanged: (val) {
+              onChanged: (value) {
                 setState(() {
-                  _selectedType = val!;
+                  searchText = value;
                 });
-                _loadDogs();
               },
             ),
           ),
 
-          const SizedBox(height: 10),
-
-          // 📋 Dog List
           Expanded(
-            child: _loading
+            child: loading
                 ? const Center(child: CircularProgressIndicator())
-                : _dogs.isEmpty
-                ? const Center(child: Text('No dogs found'))
                 : ListView.builder(
-                    itemCount: _dogs.length,
+                    itemCount: filteredDogs.length,
+
                     itemBuilder: (context, index) {
-                      final dog = _dogs[index] as Map<String, dynamic>;
-
-                      return InkWell(
-                        onTap: () async {
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => DogDetailsPage(dogId: dog['id']),
-                            ),
-                          );
-
-                          _loadDogs();
-                        },
-
-                        child: Card(
-                          margin: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-
-                              children: [
-                                CircleAvatar(
-                                  radius: 30,
-                                  backgroundColor: Colors.grey.shade200,
-                                  backgroundImage:
-                                      (dog['dog_photo'] != null &&
-                                          dog['dog_photo']
-                                              .toString()
-                                              .isNotEmpty)
-                                      ? NetworkImage(dog['dog_photo'])
-                                      : const AssetImage(
-                                              'assets/images/no_photo.png',
-                                            )
-                                            as ImageProvider,
-                                ),
-
-                                const SizedBox(width: 12),
-
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-
-                                    children: [
-                                      Text(
-                                        dog['dog_name'] ?? '',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-
-                                      Text('Pet: ${dog['pet_name'] ?? ''}'),
-
-                                      Text('ALA: ${dog['dog_ala'] ?? ''}'),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
+                      return buildDogTile(filteredDogs[index]);
                     },
                   ),
           ),

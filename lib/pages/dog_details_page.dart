@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'widgets/dog_files_section.dart';
+
+import 'widgets/dog_photos_tab.dart';
+import 'widgets/dog_files_tab.dart';
+import 'widgets/dog_notes_tab.dart';
 
 class DogDetailsPage extends StatefulWidget {
   final String dogId;
@@ -12,121 +14,240 @@ class DogDetailsPage extends StatefulWidget {
   State<DogDetailsPage> createState() => _DogDetailsPageState();
 }
 
-class _DogDetailsPageState extends State<DogDetailsPage> {
+class _DogDetailsPageState extends State<DogDetailsPage>
+    with SingleTickerProviderStateMixin {
   final supabase = Supabase.instance.client;
 
   Map<String, dynamic>? dog;
 
   bool loading = true;
 
+  bool isLocked = true;
+
+  bool isAdmin = false;
+
+  late TabController tabController;
+
   @override
   void initState() {
     super.initState();
+
+    tabController = TabController(length: 3, vsync: this);
+
     loadDog();
+
+    checkAdmin();
+  }
+
+  @override
+  void dispose() {
+    tabController.dispose();
+    super.dispose();
+  }
+
+  Future<void> checkAdmin() async {
+    final user = supabase.auth.currentUser;
+
+    if (user == null) return;
+
+    /// For now, any logged in user is admin
+    /// Later we connect to profiles.role
+
+    isAdmin = true;
   }
 
   Future<void> loadDog() async {
-    final result = await supabase
-        .from('dogs')
-        .select()
-        .eq('id', widget.dogId)
-        .single();
+    setState(() {
+      loading = true;
+    });
+
+    try {
+      final response = await supabase
+          .from('dogs')
+          .select()
+          .eq('id', widget.dogId)
+          .single();
+
+      dog = response;
+
+      isLocked = dog?['locked'] ?? true;
+    } catch (e) {
+      debugPrint('Error loading dog: $e');
+    }
 
     setState(() {
-      dog = result;
       loading = false;
     });
   }
 
-  String calculateAge(DateTime dob) {
-    final now = DateTime.now();
+  Future<void> toggleLock() async {
+    if (!isAdmin) return;
 
-    int years = now.year - dob.year;
+    final newState = !isLocked;
 
-    if (now.month < dob.month ||
-        (now.month == dob.month && now.day < dob.day)) {
-      years--;
-    }
+    await supabase
+        .from('dogs')
+        .update({'locked': newState})
+        .eq('id', widget.dogId);
 
-    return "$years years";
+    setState(() {
+      isLocked = newState;
+    });
+  }
+
+  void openLinkedDog(String? dogId) {
+    if (dogId == null) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => DogDetailsPage(dogId: dogId)),
+    );
+  }
+
+  Widget buildHeader() {
+    final name = dog?['name'] ?? '';
+
+    final imageUrl = dog?['photo_url'];
+
+    return Column(
+      children: [
+        /// IMAGE
+        Container(
+          width: 150,
+          height: 150,
+
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: Colors.grey[200],
+          ),
+
+          clipBehavior: Clip.antiAlias,
+
+          child: imageUrl != null
+              ? Image.network(imageUrl, fit: BoxFit.cover)
+              : const Icon(Icons.pets, size: 60, color: Colors.grey),
+        ),
+
+        const SizedBox(height: 12),
+
+        /// NAME + LOCK
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+
+          children: [
+            Text(
+              name,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+
+            const SizedBox(width: 8),
+
+            IconButton(
+              icon: Icon(isLocked ? Icons.lock : Icons.lock_open),
+
+              color: isLocked ? Colors.red : Colors.green,
+
+              onPressed: toggleLock,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget buildInfoTile({
+    required String label,
+
+    required String? value,
+
+    String? linkedDogId,
+  }) {
+    return ListTile(
+      title: Text(label),
+
+      subtitle: Text(value ?? '', style: const TextStyle(fontSize: 16)),
+
+      trailing: linkedDogId != null ? const Icon(Icons.chevron_right) : null,
+
+      onTap: linkedDogId != null ? () => openLinkedDog(linkedDogId) : null,
+    );
+  }
+
+  Widget buildPedigree() {
+    return Column(
+      children: [
+        buildInfoTile(
+          label: 'Mother',
+          value: dog?['mother_name'],
+          linkedDogId: dog?['mother_id'],
+        ),
+
+        buildInfoTile(
+          label: 'Father',
+          value: dog?['father_name'],
+          linkedDogId: dog?['father_id'],
+        ),
+
+        buildInfoTile(label: 'Owner', value: dog?['owner_name']),
+      ],
+    );
+  }
+
+  Widget buildTabs() {
+    return Expanded(
+      child: Column(
+        children: [
+          TabBar(
+            controller: tabController,
+            tabs: const [
+              Tab(text: 'Photos'),
+
+              Tab(text: 'Files'),
+
+              Tab(text: 'Notes'),
+            ],
+          ),
+
+          Expanded(
+            child: TabBarView(
+              controller: tabController,
+
+              children: [
+                DogPhotosTab(dogId: widget.dogId),
+
+                DogFilesTab(dogId: widget.dogId),
+
+                DogNotesTab(dogId: widget.dogId),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-
-    final photo = dog!['dog_photo'];
-
-    final dob = dog!['dob'] != null ? DateTime.parse(dog!['dob']) : null;
-
     return Scaffold(
-      appBar: AppBar(title: Text(dog!['dog_name'] ?? "")),
+      appBar: AppBar(title: const Text('Dog Details')),
 
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : dog == null
+          ? const Center(child: Text('Dog not found'))
+          : Column(
+              children: [
+                const SizedBox(height: 12),
 
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+                buildHeader(),
 
-          children: [
-            Center(
-              child: CircleAvatar(
-                radius: 60,
+                const SizedBox(height: 8),
 
-                backgroundImage: (photo != null && photo.toString().isNotEmpty)
-                    ? NetworkImage(photo)
-                    : const AssetImage('assets/images/no_photo.png')
-                          as ImageProvider,
-              ),
+                buildPedigree(),
+
+                buildTabs(),
+              ],
             ),
-
-            const SizedBox(height: 20),
-
-            Text(
-              dog!['dog_name'] ?? "",
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-            ),
-
-            Text("Pet Name: ${dog!['pet_name'] ?? ""}"),
-
-            Text("ALA: ${dog!['dog_ala'] ?? ""}"),
-
-            Text("Microchip: ${dog!['microchip'] ?? ""}"),
-
-            const SizedBox(height: 16),
-
-            Text("Sex: ${dog!['sex'] ?? ""}"),
-
-            Text("Colour: ${dog!['colour'] ?? ""}"),
-
-            if (dob != null)
-              Text("DOB: ${DateFormat('dd MMM yyyy').format(dob)}"),
-
-            if (dob != null) Text("Age: ${calculateAge(dob)}"),
-
-            Text("Dog Type: ${dog!['dog_type'] ?? ""}"),
-
-            Text("Status: ${dog!['dog_status'] ?? ""}"),
-
-            const SizedBox(height: 16),
-
-            Text("Desexed: ${dog!['desexed'] == true ? "Yes" : "No"}"),
-
-            if (dog!['spay_due'] != null)
-              Text(
-                "Spay Due: ${DateFormat('dd MMM yyyy').format(DateTime.parse(dog!['spay_due']))}",
-              ),
-
-            const SizedBox(height: 16),
-
-            if (dog!['notes'] != null) Text("Notes: ${dog!['notes']}"),
-
-            DogFilesSection(dogId: widget.dogId),
-          ],
-        ),
-      ),
     );
   }
 }
