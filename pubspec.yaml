@@ -36,7 +36,13 @@ dependencies:
   pdf: ^3.10.7
   printing: ^5.12.0
   supabase_flutter: ^2.5.1
-  share_plus: ^7.2.1
+  share_plus: ^9.0.0
+
+  image_picker: ^1.0.7
+  file_picker: ^8.0.0
+
+  path: ^1.9.0
+
   
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -48,6 +54,13 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
+  flutter_launcher_icons: ^0.13.1
+flutter_launcher_icons:
+  ios: true
+  android: false
+  image_path: "assets/images/app_icon.png"
+
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -80,6 +93,9 @@ flutter:
     - assets/fonts/Roboto-Regular.ttf
     - assets/images/i30.png
     - assets/images/staria.png
+    - assets/images/app_icon.png
+
+    
 
 
   # An image asset can refer to one or more resolution-specific "variants", see

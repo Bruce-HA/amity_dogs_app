@@ -26,7 +26,11 @@ class AmityDogsApp extends StatelessWidget {
     return MaterialApp(
       title: 'Amity Labradoodles',
 
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
+      theme: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: Colors.teal,
+        scaffoldBackgroundColor: Colors.grey.shade100,
+      ),
 
       home: StreamBuilder<AuthState>(
         stream: Supabase.instance.client.auth.onAuthStateChange,

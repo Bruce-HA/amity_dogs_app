@@ -45,5 +45,14 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>This app allows taking photos of dogs for records.</string>
+
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app allows selecting dog photos from your library.</string>
+
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>This app may save dog photos to your library.</string>
+
 </dict>
 </plist>

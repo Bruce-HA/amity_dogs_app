@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dog_details_page.dart';
 
 class DogsPage extends StatefulWidget {
   const DogsPage({super.key});
@@ -35,7 +36,8 @@ class _DogsPageState extends State<DogsPage> {
       query = query.or(
         'dog_name.ilike.%$search%,'
         'pet_name.ilike.%$search%,'
-        'microchip.ilike.%$search%',
+        'microchip.ilike.%$search%,'
+        'dog_ala.ilike.%$search%',
       );
     }
 
@@ -159,62 +161,74 @@ class _DogsPageState extends State<DogsPage> {
                     itemBuilder: (context, index) {
                       final dog = _dogs[index] as Map<String, dynamic>;
 
-                      return Card(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // 🖼 Thumbnail
-                              CircleAvatar(
-                                radius: 30,
-                                backgroundImage: dog['dog_photo'] != null
-                                    ? NetworkImage(dog['dog_photo'])
-                                    : null,
-                                child: dog['dog_photo'] == null
-                                    ? const Icon(Icons.pets)
-                                    : null,
-                              ),
+                      return InkWell(
+                        onTap: () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => DogDetailsPage(dogId: dog['id']),
+                            ),
+                          );
 
-                              const SizedBox(width: 12),
+                          _loadDogs();
+                        },
 
-                              // 📋 Dog Info
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      dog['dog_name'] ?? '',
-                                      style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    Text('Pet: ${dog['pet_name'] ?? ''}'),
-                                    Text(
-                                      'Microchip: ${dog['microchip'] ?? ''}',
-                                    ),
-                                    Text('ALA: ${dog['dog_ala'] ?? ''}'),
+                        child: Card(
+                          margin: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
 
-                                    const SizedBox(height: 8),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
 
-                                    // 🏷 Chips Row
-                                    Wrap(
-                                      spacing: 6,
-                                      runSpacing: -8,
-                                      children: _buildChips(dog),
-                                    ),
-                                  ],
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+
+                              children: [
+                                CircleAvatar(
+                                  radius: 30,
+                                  backgroundColor: Colors.grey.shade200,
+                                  backgroundImage:
+                                      (dog['dog_photo'] != null &&
+                                          dog['dog_photo']
+                                              .toString()
+                                              .isNotEmpty)
+                                      ? NetworkImage(dog['dog_photo'])
+                                      : const AssetImage(
+                                              'assets/images/no_photo.png',
+                                            )
+                                            as ImageProvider,
                                 ),
-                              ),
-                            ],
+
+                                const SizedBox(width: 12),
+
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+
+                                    children: [
+                                      Text(
+                                        dog['dog_name'] ?? '',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+
+                                      Text('Pet: ${dog['pet_name'] ?? ''}'),
+
+                                      Text('ALA: ${dog['dog_ala'] ?? ''}'),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       );
