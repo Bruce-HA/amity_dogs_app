@@ -1,9 +1,6 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
-import '../services/vehicle_log_pdf.dart';
+import 'vehicle_report_page.dart';
 
 class VehicleLogPage extends StatefulWidget {
   const VehicleLogPage({super.key});
@@ -13,383 +10,179 @@ class VehicleLogPage extends StatefulWidget {
 }
 
 class _VehicleLogPageState extends State<VehicleLogPage> {
-
   final supabase = Supabase.instance.client;
 
-  List<Map<String, dynamic>> logs = [];
+  final _formKey = GlobalKey<FormState>();
 
-  bool loading = true;
+  final _startKmController = TextEditingController();
+  final _endKmController = TextEditingController();
+  final _notesController = TextEditingController();
 
-  String selectedVehicle = '';
+  String? _driverName;
 
-  bool showBusiness = true;
+  bool _loading = true;
+  bool _saving = false;
 
-  final descriptionController = TextEditingController();
-  final startKmController = TextEditingController();
-  final endKmController = TextEditingController();
-  final notesController = TextEditingController();
+  String _selectedVehicle = "I30";
 
-  /// Vehicle images (must match database names exactly)
-  final Map<String, String> vehicleImages = {
+  bool _isBusiness = false;
 
-    'I30': 'assets/images/I30.png',
-
-    'Staria': 'assets/images/Staria.png',
-
-  };
-
-  /// Default vehicle mode
-  final Map<String, bool> vehicleDefaults = {
-
-    'I30': false,
-
-    'Staria': true,
-
-  };
+  int _i30Km = 0;
+  int _stariaKm = 0;
 
   @override
   void initState() {
     super.initState();
-    loadLogs();
+    _initialize();
   }
 
-  Future<void> loadLogs() async {
+  Future<void> _initialize() async {
+    await _loadDriver();
 
-    setState(() => loading = true);
+    await _loadTotals();
 
-    try {
-
-      final response =
-          await supabase
-              .from('vehicle_logs')
-              .select()
-              .order('created_at', ascending: false);
-
-      logs =
-          List<Map<String, dynamic>>
-              .from(response);
-
-      if (logs.isNotEmpty &&
-          selectedVehicle.isEmpty) {
-
-        selectedVehicle =
-            logs.first['vehicle_name'];
-
-        showBusiness =
-            vehicleDefaults[selectedVehicle] ?? true;
-
-        carryForwardKm();
-      }
-
-    } catch (e) {
-
-      debugPrint('Load error: $e');
-
-    }
-
-    setState(() => loading = false);
-  }
-
-  List<String> get vehicles {
-
-    return logs
-        .map((e) =>
-            e['vehicle_name']
-                .toString())
-        .toSet()
-        .toList();
-  }
-
-  List<Map<String, dynamic>>
-      get filteredLogs {
-
-    return logs.where((log) {
-
-      return log['vehicle_name'] ==
-                 selectedVehicle &&
-             log['is_business'] ==
-                 showBusiness;
-
-    }).toList();
-  }
-
-  /// Carry forward odometer using last vehicle trip
-  void carryForwardKm() {
-
-    final lastTrip =
-        logs.firstWhere(
-
-      (log) =>
-          log['vehicle_name'] ==
-              selectedVehicle,
-
-      orElse: () => {},
-
-    );
-
-    if (lastTrip.isNotEmpty) {
-
-      startKmController.text =
-          lastTrip['end_km']
-              .toString();
-
-    } else {
-
-      startKmController.clear();
-    }
-  }
-
-  void selectVehicle(String vehicle) {
+    await _selectVehicle("I30");
 
     setState(() {
-
-      selectedVehicle = vehicle;
-
-      showBusiness =
-          vehicleDefaults[vehicle] ?? true;
-
+      _loading = false;
     });
-
-    carryForwardKm();
   }
 
-  Future<void> addTrip() async {
+  Future<void> _loadDriver() async {
+    final user = supabase.auth.currentUser;
 
-    final start =
-        int.tryParse(
-            startKmController.text);
+    final profile = await supabase
+        .from('profiles')
+        .select('name')
+        .eq('user_id', user!.id)
+        .single();
 
-    final end =
-        int.tryParse(
-            endKmController.text);
+    _driverName = profile['name'];
+  }
 
-    if (start == null ||
-        end == null) return;
+  Future<void> _loadTotals() async {
+    final i30 = await supabase
+        .from('vehicle_logs')
+        .select('end_km')
+        .eq('vehicle_name', 'I30')
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+
+    final staria = await supabase
+        .from('vehicle_logs')
+        .select('end_km')
+        .eq('vehicle_name', 'Staria')
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+
+    _i30Km = i30?['end_km'] ?? 0;
+    _stariaKm = staria?['end_km'] ?? 0;
+  }
+
+  Future<void> _selectVehicle(String vehicle) async {
+    final last = await supabase
+        .from('vehicle_logs')
+        .select('end_km')
+        .eq('vehicle_name', vehicle)
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+
+    setState(() {
+      _selectedVehicle = vehicle;
+
+      // default trip type per vehicle
+      _isBusiness = vehicle == "Staria";
+
+      _startKmController.text = last?['end_km']?.toString() ?? "0";
+    });
+  }
+
+  Future<void> _saveLog() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final startKm = int.parse(_startKmController.text);
+    final endKm = int.parse(_endKmController.text);
+
+    if (endKm < startKm) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("End KM cannot be less than Start KM"),
+          backgroundColor: Colors.red,
+        ),
+      );
+
+      return;
+    }
+
+    setState(() => _saving = true);
 
     try {
+      final user = supabase.auth.currentUser;
 
-      await supabase
-          .from('vehicle_logs')
-          .insert({
+      await supabase.from('vehicle_logs').insert({
+        'user_id': user!.id,
 
-        'vehicle_name':
-            selectedVehicle,
+        'driver_name': _driverName,
 
-        'log_date':
-            DateTime.now()
-                .toIso8601String(),
+        'vehicle_name': _selectedVehicle,
 
-        'created_at':
-            DateTime.now()
-                .toIso8601String(),
+        'is_business': _isBusiness,
 
-        'description':
-            descriptionController.text,
+        'start_km': startKm,
 
-        'start_km': start,
+        'end_km': endKm,
 
-        'end_km': end,
-
-        'distance_km':
-            end - start,
-
-        'is_business':
-            showBusiness,
-
-        'driver_name':
-            supabase.auth
-                    .currentUser
-                    ?.email ??
-                '',
-
-        'notes':
-            notesController.text,
-
+        'notes': _notesController.text,
       });
 
-      descriptionController.clear();
-      endKmController.clear();
-      notesController.clear();
-
-      await loadLogs();
-
+      if (mounted) Navigator.pop(context);
     } catch (e) {
-
-      debugPrint(
-          'Insert error: $e');
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
     }
+
+    setState(() => _saving = false);
   }
 
-  Future<void> generateVehicleReports(
-      String vehicle) async {
+  Widget vehicleCard(String name, String image, int km) {
+    final selected = _selectedVehicle == name;
 
-    final vehicleLogs =
-        logs.where(
-          (log) =>
-              log['vehicle_name'] ==
-              vehicle,
-        ).toList();
-
-    if (vehicleLogs.isEmpty)
-      return;
-
-    final businessLogs =
-        vehicleLogs.where(
-      (log) =>
-          log['is_business'] ==
-          true,
-    ).toList();
-
-    final privateLogs =
-        vehicleLogs.where(
-      (log) =>
-          log['is_business'] ==
-          false,
-    ).toList();
-
-    final firstDate =
-        vehicleLogs.last['log_date']
-            .toString()
-            .substring(0, 10);
-
-    final lastDate =
-        vehicleLogs.first['log_date']
-            .toString()
-            .substring(0, 10);
-
-    await savePdf(
-        vehicle,
-        'AllTrips',
-        vehicleLogs,
-        firstDate,
-        lastDate);
-
-    await savePdf(
-        vehicle,
-        'Business',
-        businessLogs,
-        firstDate,
-        lastDate);
-
-    await savePdf(
-        vehicle,
-        'Private',
-        privateLogs,
-        firstDate,
-        lastDate);
-
-    ScaffoldMessenger.of(context)
-        .showSnackBar(
-
-      SnackBar(
-        content: Text(
-            'Reports saved for $vehicle'),
-      ),
-    );
-  }
-
-  Future<void> savePdf(
-    String vehicle,
-    String type,
-    List<Map<String, dynamic>> reportLogs,
-    String firstDate,
-    String lastDate,
-  ) async {
-
-    if (reportLogs.isEmpty)
-      return;
-
-    final pdf =
-        await VehicleLogPdfService
-            .generate(
-      logs: reportLogs,
-      landscape: true,
-    );
-
-    final Uint8List bytes =
-        await pdf.save();
-
-    final fileName =
-        'Amity_${vehicle}_${type}_${firstDate}_to_${lastDate}.pdf';
-
-    final storagePath =
-        '$vehicle/$fileName';
-
-    await supabase.storage
-        .from('vehicle_reports')
-        .uploadBinary(
-          storagePath,
-          bytes,
-          fileOptions:
-              const FileOptions(
-                  upsert: true),
-        );
-  }
-
-  Widget buildVehicleCard(
-      String vehicle) {
-
-    final selected =
-        vehicle ==
-            selectedVehicle;
-
-    return GestureDetector(
-
-      onTap: () =>
-          selectVehicle(vehicle),
-
+    return Expanded(
       child: Card(
-
-        color: selected
-            ? Colors.blue
-            : null,
-
-        child: SizedBox(
-
-          width: 180,
-
+        color: selected ? Colors.teal.shade100 : null,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
           child: Column(
-
             children: [
-
-              Expanded(
-
-                child: Image.asset(
-                  vehicleImages[
-                      vehicle]!,
-                  fit: BoxFit.cover,
-                ),
+              GestureDetector(
+                onTap: () => _selectVehicle(name),
+                child: Image.asset(image, height: 80),
               ),
 
-              Padding(
+              Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
 
-                padding:
-                    const EdgeInsets
-                        .all(8),
+              Text("$km km"),
 
-                child: Text(
-                  vehicle,
-                  style:
-                      TextStyle(
-                    color: selected
-                        ? Colors.white
-                        : null,
-                    fontSize: 18,
-                  ),
-                ),
+              const SizedBox(height: 6),
+
+              ElevatedButton.icon(
+                icon: const Icon(Icons.picture_as_pdf, size: 18),
+
+                label: const Text("Report"),
+
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => VehicleReportPage(vehicleName: name),
+                    ),
+                  );
+                },
               ),
-
-              IconButton(
-
-                icon: const Icon(
-                    Icons.picture_as_pdf),
-
-                onPressed: () =>
-                    generateVehicleReports(
-                        vehicle),
-
-              ),
-
             ],
           ),
         ),
@@ -397,158 +190,128 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
     );
   }
 
-  Widget buildTripEntry() {
-
-    return Padding(
-
-      padding:
-          const EdgeInsets.all(12),
-
-      child: Column(
-
-        children: [
-
-          Row(
-
-            children: [
-
-              const Text(
-                  'Business'),
-
-              Switch(
-                value:
-                    showBusiness,
-                onChanged:
-                    (v) {
-
-                  setState(() {
-                    showBusiness =
-                        v;
-                  });
-                },
-              ),
-
-              const Text(
-                  'Private'),
-
-            ],
-          ),
-
-          TextField(
-            controller:
-                descriptionController,
-            decoration:
-                const InputDecoration(
-              labelText:
-                  'Description',
-            ),
-          ),
-
-          TextField(
-            controller:
-                startKmController,
-            decoration:
-                const InputDecoration(
-              labelText:
-                  'Start KM',
-            ),
-          ),
-
-          TextField(
-            controller:
-                endKmController,
-            decoration:
-                const InputDecoration(
-              labelText:
-                  'End KM',
-            ),
-          ),
-
-          ElevatedButton(
-            onPressed:
-                addTrip,
-            child:
-                const Text(
-                    'Add Trip'),
-          ),
-
-        ],
-      ),
-    );
-  }
-
-  Widget buildLogList() {
-
-    return Expanded(
-
-      child: ListView.builder(
-
-        itemCount:
-            filteredLogs.length,
-
-        itemBuilder:
-            (_, index) {
-
-          final log =
-              filteredLogs[index];
-
-          final distance =
-              log['distance_km'] ??
-              (log['end_km'] -
-                  log['start_km']);
-
-          return ListTile(
-
-            title: Text(
-                log['description'] ??
-                    ''),
-
-            subtitle: Text(
-              '${log['log_date'].toString().substring(0, 16)}\n'
-              '${log['start_km']} → ${log['end_km']}',
-            ),
-
-            trailing: Text(
-                '$distance km'),
-
-          );
-        },
-      ),
-    );
+  void _report() {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text("Report generator next step")));
   }
 
   @override
-  Widget build(
-      BuildContext context) {
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
     return Scaffold(
-
       appBar: AppBar(
-        title: const Text(
-            'Vehicle Log'),
+        title: const Text("Vehicle Log"),
+
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf),
+            onPressed: _report,
+          ),
+        ],
       ),
 
-      body: loading
-          ? const Center(
-              child:
-                  CircularProgressIndicator(),
-            )
-          : Column(
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
 
-              children: [
+        child: Form(
+          key: _formKey,
 
-                SizedBox(
-                  height: 200,
-                  child: ListView(
-                    scrollDirection:
-                        Axis.horizontal,
-                    children: vehicles
-                        .map(
-                            buildVehicleCard)
-                        .toList(),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  vehicleCard("I30", "assets/images/i30.png", _i30Km),
+
+                  vehicleCard("Staria", "assets/images/staria.png", _stariaKm),
+                ],
+              ),
+
+              const SizedBox(height: 10),
+
+              // BUSINESS / PRIVATE SWITCH AT TOP
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+
+                children: [
+                  const Text("Private"),
+
+                  Switch(
+                    value: _isBusiness,
+
+                    onChanged: (value) {
+                      setState(() {
+                        _isBusiness = value;
+                      });
+                    },
                   ),
+
+                  const Text("Business"),
+                ],
+              ),
+
+              const SizedBox(height: 10),
+
+              TextFormField(
+                initialValue: _driverName,
+
+                readOnly: true,
+
+                decoration: const InputDecoration(labelText: "Driver"),
+              ),
+
+              const SizedBox(height: 16),
+
+              TextFormField(
+                controller: _startKmController,
+
+                keyboardType: TextInputType.number,
+
+                decoration: const InputDecoration(labelText: "Start KM"),
+
+                validator: (v) => v!.isEmpty ? "Required" : null,
+              ),
+
+              const SizedBox(height: 16),
+
+              TextFormField(
+                controller: _endKmController,
+
+                keyboardType: TextInputType.number,
+
+                decoration: const InputDecoration(labelText: "End KM"),
+
+                validator: (v) => v!.isEmpty ? "Required" : null,
+              ),
+
+              const SizedBox(height: 16),
+
+              TextFormField(
+                controller: _notesController,
+
+                decoration: const InputDecoration(labelText: "Notes"),
+              ),
+
+              const SizedBox(height: 24),
+
+              SizedBox(
+                width: double.infinity,
+
+                child: ElevatedButton(
+                  onPressed: _saving ? null : _saveLog,
+
+                  child: _saving
+                      ? const CircularProgressIndicator()
+                      : const Text("Save Log"),
                 ),
-
-                buildTripEntry(),
-
-                buildLogList(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
