@@ -357,7 +357,7 @@ class _VehicleReportPageState extends State<VehicleReportPage> {
                 child: ElevatedButton.icon(
                   icon: const Icon(Icons.email),
 
-                  label: const Text("Email Report"),
+                  label: const Text("Save and Email Report"),
 
                   onPressed: () => emailPdf(pdf),
                 ),

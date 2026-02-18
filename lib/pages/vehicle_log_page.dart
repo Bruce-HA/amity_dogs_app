@@ -12,306 +12,380 @@ class VehicleLogPage extends StatefulWidget {
 class _VehicleLogPageState extends State<VehicleLogPage> {
   final supabase = Supabase.instance.client;
 
-  final _formKey = GlobalKey<FormState>();
+  List<Map<String, dynamic>> logs = [];
 
-  final _startKmController = TextEditingController();
-  final _endKmController = TextEditingController();
-  final _notesController = TextEditingController();
+  bool loading = true;
 
-  String? _driverName;
+  String selectedVehicle = '';
 
-  bool _loading = true;
-  bool _saving = false;
+  bool showBusiness = true;
 
-  String _selectedVehicle = "I30";
+  final driverController = TextEditingController();
+  final notesController = TextEditingController();
+  final startKmController = TextEditingController();
+  final endKmController = TextEditingController();
 
-  bool _isBusiness = false;
+  final Map<String, String> vehicleImages = {
+    'I30': 'assets/images/I30.png',
+    'Staria': 'assets/images/Staria.png',
+  };
 
-  int _i30Km = 0;
-  int _stariaKm = 0;
+  final Map<String, bool> vehicleDefaults = {'I30': false, 'Staria': true};
 
   @override
   void initState() {
     super.initState();
-    _initialize();
+    loadDriverName();
+    loadLogs();
   }
 
-  Future<void> _initialize() async {
-    await _loadDriver();
-
-    await _loadTotals();
-
-    await _selectVehicle("I30");
-
-    setState(() {
-      _loading = false;
-    });
-  }
-
-  Future<void> _loadDriver() async {
+  Future<void> loadDriverName() async {
     final user = supabase.auth.currentUser;
 
-    final profile = await supabase
-        .from('profiles')
-        .select('name')
-        .eq('user_id', user!.id)
-        .single();
-
-    _driverName = profile['name'];
+    if (user != null) {
+      driverController.text =
+          user.userMetadata?['full_name'] ?? user.email ?? '';
+    }
   }
 
-  Future<void> _loadTotals() async {
-    final i30 = await supabase
-        .from('vehicle_logs')
-        .select('end_km')
-        .eq('vehicle_name', 'I30')
-        .order('created_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
+  Future<void> loadLogs() async {
+    setState(() => loading = true);
 
-    final staria = await supabase
+    final response = await supabase
         .from('vehicle_logs')
-        .select('end_km')
-        .eq('vehicle_name', 'Staria')
-        .order('created_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
+        .select()
+        .order('created_at', ascending: false);
 
-    _i30Km = i30?['end_km'] ?? 0;
-    _stariaKm = staria?['end_km'] ?? 0;
+    logs = List<Map<String, dynamic>>.from(response);
+
+    if (logs.isNotEmpty && selectedVehicle.isEmpty) {
+      selectedVehicle = logs.first['vehicle_name'];
+
+      showBusiness = vehicleDefaults[selectedVehicle] ?? true;
+    }
+
+    carryForwardKm();
+
+    setState(() => loading = false);
   }
 
-  Future<void> _selectVehicle(String vehicle) async {
-    final last = await supabase
-        .from('vehicle_logs')
-        .select('end_km')
-        .eq('vehicle_name', vehicle)
-        .order('created_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
+  /// AUTO FILL ONLY IF EMPTY (allows manual override)
+  void carryForwardKm() {
+    if (startKmController.text.isNotEmpty) {
+      return;
+    }
 
+    final lastTrip = logs.firstWhere(
+      (log) => log['vehicle_name'] == selectedVehicle,
+
+      orElse: () => {},
+    );
+
+    if (lastTrip.isNotEmpty) {
+      startKmController.text = lastTrip['end_km'].toString();
+    }
+  }
+
+  List<String> get vehicles {
+    return logs.map((e) => e['vehicle_name'].toString()).toSet().toList();
+  }
+
+  List<Map<String, dynamic>> get filteredLogs {
+    return logs.where((log) {
+      return log['vehicle_name'] == selectedVehicle &&
+          log['is_business'] == showBusiness;
+    }).toList();
+  }
+
+  void selectVehicle(String vehicle) {
     setState(() {
-      _selectedVehicle = vehicle;
+      selectedVehicle = vehicle;
 
-      // default trip type per vehicle
-      _isBusiness = vehicle == "Staria";
+      showBusiness = vehicleDefaults[vehicle] ?? true;
 
-      _startKmController.text = last?['end_km']?.toString() ?? "0";
+      /// Clear so carryForwardKm can refill correctly
+      startKmController.clear();
     });
+
+    carryForwardKm();
   }
 
-  Future<void> _saveLog() async {
-    if (!_formKey.currentState!.validate()) return;
+  Future<void> addTrip() async {
+    final start = int.tryParse(startKmController.text);
 
-    final startKm = int.parse(_startKmController.text);
-    final endKm = int.parse(_endKmController.text);
+    final end = int.tryParse(endKmController.text);
 
-    if (endKm < startKm) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("End KM cannot be less than Start KM"),
-          backgroundColor: Colors.red,
-        ),
-      );
+    if (start == null || end == null) {
+      showError("Enter valid KM values");
+      return;
+    }
+
+    if (end < start) {
+      showError("End KM cannot be less than Start KM");
 
       return;
     }
 
-    setState(() => _saving = true);
+    final now = DateTime.now();
+
+    final localDate =
+        "${now.year.toString().padLeft(4, '0')}-"
+        "${now.month.toString().padLeft(2, '0')}-"
+        "${now.day.toString().padLeft(2, '0')}";
+
+    final user = supabase.auth.currentUser;
 
     try {
-      final user = supabase.auth.currentUser;
-
       await supabase.from('vehicle_logs').insert({
-        'user_id': user!.id,
-
-        'driver_name': _driverName,
-
-        'vehicle_name': _selectedVehicle,
-
-        'is_business': _isBusiness,
-
-        'start_km': startKm,
-
-        'end_km': endKm,
-
-        'notes': _notesController.text,
+        'vehicle_name': selectedVehicle,
+        'driver_name': driverController.text.trim(),
+        'notes': notesController.text.trim(),
+        'start_km': start,
+        'end_km': end,
+        'distance_km': end - start,
+        'is_business': showBusiness,
+        'log_date': localDate,
+        'user_id': user?.id,
       });
 
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.toString())));
-    }
+      notesController.clear();
+      endKmController.clear();
 
-    setState(() => _saving = false);
+      startKmController.clear();
+
+      await loadLogs();
+
+      showMessage("Trip saved");
+    } catch (e) {
+      showError("Error saving trip: $e");
+    }
   }
 
-  Widget vehicleCard(String name, String image, int km) {
-    final selected = _selectedVehicle == name;
+  void showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
+  }
 
-    return Expanded(
-      child: Card(
-        color: selected ? Colors.teal.shade100 : null,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            children: [
-              GestureDetector(
-                onTap: () => _selectVehicle(name),
-                child: Image.asset(image, height: 80),
-              ),
+  void showMessage(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
 
-              Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+  String formatDate(String date) {
+    final d = DateTime.parse(date);
 
-              Text("$km km"),
+    return "${d.day.toString().padLeft(2, '0')}/"
+        "${d.month.toString().padLeft(2, '0')}/"
+        "${d.year}";
+  }
 
-              const SizedBox(height: 6),
+  /// PROFESSIONAL VEHICLE DASHBOARD CARD
+  Widget buildVehicleCard(String vehicle) {
+    final isSelected = vehicle == selectedVehicle;
 
-              ElevatedButton.icon(
-                icon: const Icon(Icons.picture_as_pdf, size: 18),
+    return GestureDetector(
+      onTap: () => selectVehicle(vehicle),
 
-                label: const Text("Report"),
+      child: Container(
+        width: 220,
 
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => VehicleReportPage(vehicleName: name),
-                    ),
-                  );
-                },
-              ),
-            ],
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+
+        decoration: BoxDecoration(
+          color: Colors.white,
+
+          borderRadius: BorderRadius.circular(16),
+
+          border: Border.all(
+            color: isSelected ? Colors.blue : Colors.grey.shade300,
+
+            width: isSelected ? 3 : 1,
           ),
+
+          boxShadow: [
+            BoxShadow(
+              color: isSelected
+                  ? Colors.blue.withOpacity(0.3)
+                  : Colors.black.withOpacity(0.1),
+
+              blurRadius: isSelected ? 12 : 6,
+
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+
+        child: Column(
+          children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16),
+                ),
+
+                child: Image.asset(
+                  vehicleImages[vehicle]!,
+
+                  fit: BoxFit.cover,
+
+                  width: double.infinity,
+                ),
+              ),
+            ),
+
+            Padding(
+              padding: const EdgeInsets.all(12),
+
+              child: Column(
+                children: [
+                  Text(
+                    vehicle,
+
+                    style: const TextStyle(
+                      fontSize: 18,
+
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.picture_as_pdf),
+
+                    label: const Text("Report"),
+
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              VehicleReportPage(vehicleName: vehicle),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  void _report() {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text("Report generator next step")));
+  Widget buildTripEntry() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+
+      child: Column(
+        children: [
+          TextField(
+            controller: driverController,
+            decoration: const InputDecoration(labelText: "Driver Name"),
+          ),
+
+          TextField(
+            controller: notesController,
+            decoration: const InputDecoration(labelText: "Notes"),
+          ),
+
+          TextField(
+            controller: startKmController,
+
+            keyboardType: TextInputType.number,
+
+            decoration: const InputDecoration(
+              labelText: "Start KM",
+
+              hintText: "Auto-filled, but can be edited",
+            ),
+          ),
+
+          TextField(
+            controller: endKmController,
+
+            keyboardType: TextInputType.number,
+
+            decoration: const InputDecoration(labelText: "End KM"),
+          ),
+
+          const SizedBox(height: 8),
+
+          SwitchListTile(
+            title: Text(showBusiness ? "Business" : "Private"),
+
+            subtitle: Text(showBusiness ? "Business trip" : "Private trip"),
+
+            value: showBusiness,
+
+            onChanged: (v) {
+              setState(() {
+                showBusiness = v;
+              });
+
+              startKmController.clear();
+
+              carryForwardKm();
+            },
+          ),
+
+          ElevatedButton(onPressed: addTrip, child: const Text("Add Trip")),
+        ],
+      ),
+    );
+  }
+
+  Widget buildLogList() {
+    return Expanded(
+      child: ListView.builder(
+        itemCount: filteredLogs.length,
+
+        itemBuilder: (_, index) {
+          final log = filteredLogs[index];
+
+          return ListTile(
+            title: Text(log['notes'] ?? ""),
+
+            subtitle: Text(
+              "${log['driver_name']}\n"
+              "${formatDate(log['log_date'])}\n"
+              "${log['start_km']} → ${log['end_km']}",
+            ),
+
+            trailing: Text("${log['distance_km']} km"),
+          );
+        },
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Vehicle Log"),
+      appBar: AppBar(title: const Text("Vehicle Log")),
 
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.picture_as_pdf),
-            onPressed: _report,
-          ),
-        ],
-      ),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                SizedBox(
+                  height: 240,
 
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
 
-        child: Form(
-          key: _formKey,
-
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  vehicleCard("I30", "assets/images/i30.png", _i30Km),
-
-                  vehicleCard("Staria", "assets/images/staria.png", _stariaKm),
-                ],
-              ),
-
-              const SizedBox(height: 10),
-
-              // BUSINESS / PRIVATE SWITCH AT TOP
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-
-                children: [
-                  const Text("Private"),
-
-                  Switch(
-                    value: _isBusiness,
-
-                    onChanged: (value) {
-                      setState(() {
-                        _isBusiness = value;
-                      });
-                    },
+                    children: vehicles.map(buildVehicleCard).toList(),
                   ),
-
-                  const Text("Business"),
-                ],
-              ),
-
-              const SizedBox(height: 10),
-
-              TextFormField(
-                initialValue: _driverName,
-
-                readOnly: true,
-
-                decoration: const InputDecoration(labelText: "Driver"),
-              ),
-
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _startKmController,
-
-                keyboardType: TextInputType.number,
-
-                decoration: const InputDecoration(labelText: "Start KM"),
-
-                validator: (v) => v!.isEmpty ? "Required" : null,
-              ),
-
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _endKmController,
-
-                keyboardType: TextInputType.number,
-
-                decoration: const InputDecoration(labelText: "End KM"),
-
-                validator: (v) => v!.isEmpty ? "Required" : null,
-              ),
-
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _notesController,
-
-                decoration: const InputDecoration(labelText: "Notes"),
-              ),
-
-              const SizedBox(height: 24),
-
-              SizedBox(
-                width: double.infinity,
-
-                child: ElevatedButton(
-                  onPressed: _saving ? null : _saveLog,
-
-                  child: _saving
-                      ? const CircularProgressIndicator()
-                      : const Text("Save Log"),
                 ),
-              ),
-            ],
-          ),
-        ),
-      ),
+
+                buildTripEntry(),
+
+                buildLogList(),
+              ],
+            ),
     );
   }
 }

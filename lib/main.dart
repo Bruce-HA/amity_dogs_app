@@ -24,6 +24,7 @@ class AmityDogsApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       title: 'Amity Labradoodles',
 
       theme: ThemeData(
