@@ -31,13 +31,9 @@ class _DogsPageState extends State<DogsPage> {
       loading = true;
     });
 
-    try {
-      final response = await supabase.from('dogs').select().order('dog_name');
+    final response = await supabase.from('dogs').select().order('dog_name');
 
-      dogs = List<Map<String, dynamic>>.from(response);
-    } catch (e) {
-      debugPrint('Error loading dogs: $e');
-    }
+    dogs = List<Map<String, dynamic>>.from(response);
 
     setState(() {
       loading = false;
@@ -48,9 +44,12 @@ class _DogsPageState extends State<DogsPage> {
     if (searchText.isEmpty) return dogs;
 
     return dogs.where((dog) {
-      final name = (dog['dog_name'] ?? '').toString().toLowerCase();
+      final name = dog['dog_name']?.toString().toLowerCase() ?? '';
 
-      return name.contains(searchText.toLowerCase());
+      final chip = dog['microchip_number']?.toString().toLowerCase() ?? '';
+
+      return name.contains(searchText.toLowerCase()) ||
+          chip.contains(searchText.toLowerCase());
     }).toList();
   }
 
@@ -58,72 +57,24 @@ class _DogsPageState extends State<DogsPage> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => DogDetailsPage(dogId: dog['id'])),
-    ).then((_) {
-      loadDogs();
-    });
+    );
   }
 
   Widget buildDogTile(Map<String, dynamic> dog) {
-    final name = dog['dog_name'] ?? '';
-
-    final breed = dog['breed'] ?? '';
-
-    final imageUrl = dog['photo_url'];
-
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
 
-      child: InkWell(
-        onTap: () => openDog(dog),
-
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-
-          child: Row(
-            children: [
-              Container(
-                width: 60,
-                height: 60,
-
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: Colors.grey[200],
-                ),
-
-                clipBehavior: Clip.antiAlias,
-
-                child: imageUrl != null
-                    ? Image.network(imageUrl, fit: BoxFit.cover)
-                    : const Icon(Icons.pets, size: 30, color: Colors.grey),
-              ),
-
-              const SizedBox(width: 12),
-
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-
-                  children: [
-                    Text(
-                      name,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-
-                    if (breed.isNotEmpty)
-                      Text(breed, style: TextStyle(color: Colors.grey[600])),
-
-                    DogStatusChips(dog: dog),
-                  ],
-                ),
-              ),
-
-              const Icon(Icons.chevron_right),
-            ],
-          ),
+      child: ListTile(
+        title: Text(
+          dog['dog_name'] ?? '',
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
+
+        subtitle: DogStatusChips(dog: dog),
+
+        trailing: const Icon(Icons.chevron_right),
+
+        onTap: () => openDog(dog),
       ),
     );
   }
@@ -131,8 +82,6 @@ class _DogsPageState extends State<DogsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Dogs')),
-
       body: Column(
         children: [
           Padding(
@@ -141,9 +90,7 @@ class _DogsPageState extends State<DogsPage> {
             child: TextField(
               decoration: const InputDecoration(
                 hintText: 'Search dogs',
-
                 prefixIcon: Icon(Icons.search),
-
                 border: OutlineInputBorder(),
               ),
 
