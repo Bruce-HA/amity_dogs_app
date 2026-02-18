@@ -14,11 +14,22 @@ class DogsPage extends StatefulWidget {
 class _DogsPageState extends State<DogsPage> {
   final supabase = Supabase.instance.client;
 
-  List<Map<String, dynamic>> dogs = [];
+  List<Map<String, dynamic>> allDogs = [];
+  List<Map<String, dynamic>> filteredDogs = [];
 
   bool loading = true;
 
+  String selectedDogType = 'All';
   String searchText = '';
+
+  final List<String> dogTypes = [
+    'All',
+    'Breeding',
+    'Guardian',
+    'Pet',
+    'Retired',
+    'Other',
+  ];
 
   @override
   void initState() {
@@ -26,95 +37,186 @@ class _DogsPageState extends State<DogsPage> {
     loadDogs();
   }
 
+  /// Load all dogs from Supabase
   Future<void> loadDogs() async {
-    setState(() {
-      loading = true;
-    });
+    loading = true;
+    setState(() {});
 
-    final response = await supabase.from('dogs').select().order('dog_name');
+    try {
+      final response = await supabase.from('dogs').select().order('dog_name');
 
-    dogs = List<Map<String, dynamic>>.from(response);
+      allDogs = List<Map<String, dynamic>>.from(response);
 
-    setState(() {
-      loading = false;
-    });
+      applyFilters();
+    } catch (e) {
+      debugPrint('Error loading dogs: $e');
+    }
+
+    loading = false;
+    setState(() {});
   }
 
-  List<Map<String, dynamic>> get filteredDogs {
-    if (searchText.isEmpty) return dogs;
+  /// Apply search + dog_type filter
+  void applyFilters() {
+    filteredDogs = allDogs.where((dog) {
+      final dogName = (dog['dog_name'] ?? '').toString().toLowerCase();
 
-    return dogs.where((dog) {
-      final name = dog['dog_name']?.toString().toLowerCase() ?? '';
+      final microchip = (dog['microchip_number'] ?? '')
+          .toString()
+          .toLowerCase();
 
-      final chip = dog['microchip_number']?.toString().toLowerCase() ?? '';
+      final ala = (dog['dog_ala'] ?? '').toString().toLowerCase();
 
-      return name.contains(searchText.toLowerCase()) ||
-          chip.contains(searchText.toLowerCase());
+      final dogType = (dog['dog_type'] ?? '').toString();
+
+      final matchesSearch =
+          dogName.contains(searchText) ||
+          microchip.contains(searchText) ||
+          ala.contains(searchText);
+
+      final matchesType =
+          selectedDogType == 'All' || dogType == selectedDogType;
+
+      return matchesSearch && matchesType;
     }).toList();
   }
 
-  void openDog(Map<String, dynamic> dog) {
+  void openDogDetails(String dogId) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => DogDetailsPage(dogId: dog['id'])),
-    );
+      MaterialPageRoute(builder: (_) => DogDetailsPage(dogId: dogId)),
+    ).then((_) {
+      loadDogs();
+    });
   }
 
   Widget buildDogTile(Map<String, dynamic> dog) {
+    final dogName = dog['dog_name'] ?? '';
+
+    final dogType = dog['dog_type'] ?? '';
+
+    final photoUrl = dog['photo_url'];
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
 
       child: ListTile(
+        leading: photoUrl != null
+            ? ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  photoUrl,
+                  width: 50,
+                  height: 50,
+                  fit: BoxFit.cover,
+                ),
+              )
+            : const Icon(Icons.pets, size: 40),
+
         title: Text(
-          dog['dog_name'] ?? '',
-          style: const TextStyle(fontWeight: FontWeight.bold),
+          dogName,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
 
-        subtitle: DogStatusChips(dog: dog),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(dogType),
+
+            DogStatusChips(dog: dog),
+          ],
+        ),
 
         trailing: const Icon(Icons.chevron_right),
 
-        onTap: () => openDog(dog),
+        onTap: () => openDogDetails(dog['id']),
+      ),
+    );
+  }
+
+  Widget buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.all(12),
+
+      child: TextField(
+        decoration: const InputDecoration(
+          hintText: 'Search name, microchip, ALA',
+
+          prefixIcon: Icon(Icons.search),
+
+          border: OutlineInputBorder(),
+
+          isDense: true,
+        ),
+
+        onChanged: (value) {
+          searchText = value.toLowerCase();
+
+          applyFilters();
+
+          setState(() {});
+        },
+      ),
+    );
+  }
+
+  Widget buildDogTypeDropdown() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+
+      child: DropdownButtonFormField<String>(
+        value: selectedDogType,
+
+        decoration: const InputDecoration(
+          labelText: 'Dog Type',
+          border: OutlineInputBorder(),
+        ),
+
+        items: dogTypes.map((type) {
+          return DropdownMenuItem(value: type, child: Text(type));
+        }).toList(),
+
+        onChanged: (value) {
+          selectedDogType = value ?? 'All';
+
+          applyFilters();
+
+          setState(() {});
+        },
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
+    if (loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-            child: TextField(
-              decoration: const InputDecoration(
-                hintText: 'Search dogs',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-              ),
+    return Column(
+      children: [
+        buildSearchBar(),
 
-              onChanged: (value) {
-                setState(() {
-                  searchText = value;
-                });
+        const SizedBox(height: 8),
+
+        buildDogTypeDropdown(),
+
+        const SizedBox(height: 8),
+
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: loadDogs,
+
+            child: ListView.builder(
+              itemCount: filteredDogs.length,
+
+              itemBuilder: (context, index) {
+                return buildDogTile(filteredDogs[index]);
               },
             ),
           ),
-
-          Expanded(
-            child: loading
-                ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    itemCount: filteredDogs.length,
-
-                    itemBuilder: (context, index) {
-                      return buildDogTile(filteredDogs[index]);
-                    },
-                  ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
