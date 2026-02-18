@@ -7,21 +7,21 @@ class DogStatusChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final List<Widget> chips = [];
+    final List<Widget> widgets = [];
 
-    chips.add(_buildDesexedChip());
+    widgets.add(_desexedChip());
 
-    final season = _buildSeasonChip();
-    if (season != null) chips.add(season);
+    final spayWidget = _spayWidget();
+    if (spayWidget != null) widgets.add(spayWidget);
 
-    final contract = _buildContractChip();
-    if (contract != null) chips.add(contract);
-
-    return Wrap(spacing: 6, runSpacing: -8, children: chips);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: widgets,
+    );
   }
 
-  Widget _buildDesexedChip() {
-    final status = dog['desexed']?.toString() ?? 'Unknown';
+  Widget _desexedChip() {
+    final status = (dog['desexed'] ?? 'Unknown').toString();
 
     Color color;
 
@@ -39,62 +39,78 @@ class DogStatusChips extends StatelessWidget {
         break;
 
       case 'No':
-        color = Colors.red;
+        color = Colors.grey;
         break;
 
       default:
         color = Colors.grey;
     }
 
-    return Chip(
-      label: Text(status),
-      backgroundColor: color.withOpacity(0.15),
-      labelStyle: TextStyle(color: color, fontWeight: FontWeight.bold),
-      visualDensity: VisualDensity.compact,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Chip(
+        label: Text('Desexed: $status'),
+
+        backgroundColor: color.withOpacity(0.15),
+
+        labelStyle: TextStyle(color: color, fontWeight: FontWeight.bold),
+
+        visualDensity: VisualDensity.compact,
+      ),
     );
   }
 
-  Widget? _buildSeasonChip() {
-    final dateStr = dog['next_season'];
-    if (dateStr == null) return null;
+  Widget? _spayWidget() {
+    final spayStr = dog['spay_due'];
 
-    final date = DateTime.tryParse(dateStr);
-    if (date == null) return null;
+    if (spayStr == null || spayStr.toString().isEmpty) return null;
 
-    final days = date.difference(DateTime.now()).inDays;
+    final spayDate = DateTime.parse(spayStr);
 
-    if (days > 30) return null;
+    final now = DateTime.now();
 
-    return Chip(
-      label: Text('Season $days d'),
-      backgroundColor: Colors.purple.withOpacity(0.15),
-      labelStyle: const TextStyle(
-        color: Colors.purple,
-        fontWeight: FontWeight.bold,
-      ),
-      visualDensity: VisualDensity.compact,
-    );
-  }
+    final days = spayDate.difference(now).inDays;
 
-  Widget? _buildContractChip() {
-    final dateStr = dog['contract_end'];
-    if (dateStr == null) return null;
+    Color color;
 
-    final date = DateTime.tryParse(dateStr);
-    if (date == null) return null;
+    if (days < 0) {
+      color = Colors.red;
+    } else if (days <= 30) {
+      color = Colors.orange;
+    } else {
+      color = Colors.green;
+    }
 
-    final days = date.difference(DateTime.now()).inDays;
+    final formatted =
+        "${spayDate.day.toString().padLeft(2, '0')}/"
+        "${spayDate.month.toString().padLeft(2, '0')}/"
+        "${spayDate.year}";
 
-    if (days > 90) return null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Chip(
+          label: const Text('Spay Due'),
 
-    return Chip(
-      label: Text('Contract $days d'),
-      backgroundColor: Colors.orange.withOpacity(0.15),
-      labelStyle: const TextStyle(
-        color: Colors.orange,
-        fontWeight: FontWeight.bold,
-      ),
-      visualDensity: VisualDensity.compact,
+          backgroundColor: color.withOpacity(0.15),
+
+          labelStyle: TextStyle(color: color, fontWeight: FontWeight.bold),
+
+          visualDensity: VisualDensity.compact,
+        ),
+
+        Padding(
+          padding: const EdgeInsets.only(left: 8, bottom: 4),
+          child: Text(
+            formatted,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

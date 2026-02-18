@@ -19,16 +19,18 @@ class _DogsPageState extends State<DogsPage> {
 
   bool loading = true;
 
-  String selectedDogType = 'All';
+  String selectedFilter = 'All';
   String searchText = '';
 
-  final List<String> dogTypes = [
+  final filters = [
     'All',
     'Breeding',
     'Guardian',
     'Pet',
     'Retired',
-    'Other',
+    'Spay Scheduled',
+    'Spay Due Soon',
+    'Spay Overdue',
   ];
 
   @override
@@ -37,91 +39,166 @@ class _DogsPageState extends State<DogsPage> {
     loadDogs();
   }
 
-  /// Load all dogs from Supabase
   Future<void> loadDogs() async {
     loading = true;
     setState(() {});
 
-    try {
-      final response = await supabase.from('dogs').select().order('dog_name');
+    final response = await supabase.from('dogs').select().order('dog_name');
 
-      allDogs = List<Map<String, dynamic>>.from(response);
+    allDogs = List<Map<String, dynamic>>.from(response);
 
-      applyFilters();
-    } catch (e) {
-      debugPrint('Error loading dogs: $e');
-    }
+    applyFilters();
 
     loading = false;
     setState(() {});
   }
 
-  /// Apply search + dog_type filter
   void applyFilters() {
     filteredDogs = allDogs.where((dog) {
-      final dogName = (dog['dog_name'] ?? '').toString().toLowerCase();
+      final name = (dog['dog_name'] ?? '').toString().toLowerCase();
 
-      final microchip = (dog['microchip_number'] ?? '')
-          .toString()
-          .toLowerCase();
+      final microchip = (dog['microchip'] ?? '').toString().toLowerCase();
 
       final ala = (dog['dog_ala'] ?? '').toString().toLowerCase();
 
-      final dogType = (dog['dog_type'] ?? '').toString();
-
       final matchesSearch =
-          dogName.contains(searchText) ||
+          name.contains(searchText) ||
           microchip.contains(searchText) ||
           ala.contains(searchText);
 
-      final matchesType =
-          selectedDogType == 'All' || dogType == selectedDogType;
+      bool matchesFilter = true;
 
-      return matchesSearch && matchesType;
+      if (selectedFilter == 'Spay Scheduled') {
+        matchesFilter = dog['spay_due'] != null;
+      } else if (selectedFilter == 'Spay Due Soon') {
+        final dueStr = dog['spay_due'];
+
+        if (dueStr == null) {
+          matchesFilter = false;
+        } else {
+          final due = DateTime.parse(dueStr);
+
+          final days = due.difference(DateTime.now()).inDays;
+
+          matchesFilter = days >= 0 && days <= 30;
+        }
+      } else if (selectedFilter == 'Spay Overdue') {
+        final dueStr = dog['spay_due'];
+
+        if (dueStr == null) {
+          matchesFilter = false;
+        } else {
+          final due = DateTime.parse(dueStr);
+
+          final days = due.difference(DateTime.now()).inDays;
+
+          matchesFilter = days < 0;
+        }
+      } else if (selectedFilter != 'All') {
+        matchesFilter = dog['dog_type'] == selectedFilter;
+      }
+
+      return matchesSearch && matchesFilter;
     }).toList();
-  }
 
-  void openDogDetails(String dogId) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => DogDetailsPage(dogId: dogId)),
-    ).then((_) {
-      loadDogs();
+    // Sort by spay_due ascending (closest first)
+    filteredDogs.sort((a, b) {
+      final aDue = a['spay_due'];
+      final bDue = b['spay_due'];
+
+      if (aDue == null && bDue == null) return 0;
+
+      if (aDue == null) return 1;
+
+      if (bDue == null) return -1;
+
+      final aDate = DateTime.parse(aDue);
+
+      final bDate = DateTime.parse(bDue);
+
+      return aDate.compareTo(bDate);
     });
   }
 
+  String calculateAge(String? dobStr) {
+    if (dobStr == null) return '';
+
+    final dob = DateTime.parse(dobStr);
+
+    final now = DateTime.now();
+
+    int years = now.year - dob.year;
+
+    int months = now.month - dob.month;
+
+    if (months < 0) {
+      years--;
+      months += 12;
+    }
+
+    return '$years y $months m';
+  }
+
+  Color getAgeColor(String? dobStr) {
+    if (dobStr == null) return Colors.black;
+
+    final dob = DateTime.parse(dobStr);
+    final now = DateTime.now();
+
+    final totalMonths = (now.year - dob.year) * 12 + (now.month - dob.month);
+
+    final years = totalMonths / 12.0;
+
+    if (years < 1) {
+      return Colors.orange;
+    }
+
+    if (years < 5) {
+      return Colors.green;
+    }
+
+    return Colors.red;
+  }
+
+  void openDog(String id) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => DogDetailsPage(dogId: id)),
+    );
+  }
+
   Widget buildDogTile(Map<String, dynamic> dog) {
-    final dogName = dog['dog_name'] ?? '';
-
-    final dogType = dog['dog_type'] ?? '';
-
-    final photoUrl = dog['photo_url'];
+    final age = calculateAge(dog['dob']);
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
 
       child: ListTile(
-        leading: photoUrl != null
-            ? ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.network(
-                  photoUrl,
-                  width: 50,
-                  height: 50,
-                  fit: BoxFit.cover,
-                ),
-              )
-            : const Icon(Icons.pets, size: 40),
+        leading: const Icon(Icons.pets, size: 40),
 
         title: Text(
-          dogName,
+          dog['dog_name'] ?? '',
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
 
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(dogType),
+            Text('ALA: ${dog['dog_ala'] ?? ''}'),
+
+            Text('Microchip: ${dog['microchip'] ?? ''}'),
+
+            Text('Sex: ${dog['sex'] ?? ''}'),
+
+            Text(
+              'Age: $age',
+              style: TextStyle(
+                color: getAgeColor(dog['dob']),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+
+            const SizedBox(height: 4),
 
             DogStatusChips(dog: dog),
           ],
@@ -129,91 +206,61 @@ class _DogsPageState extends State<DogsPage> {
 
         trailing: const Icon(Icons.chevron_right),
 
-        onTap: () => openDogDetails(dog['id']),
-      ),
-    );
-  }
-
-  Widget buildSearchBar() {
-    return Padding(
-      padding: const EdgeInsets.all(12),
-
-      child: TextField(
-        decoration: const InputDecoration(
-          hintText: 'Search name, microchip, ALA',
-
-          prefixIcon: Icon(Icons.search),
-
-          border: OutlineInputBorder(),
-
-          isDense: true,
-        ),
-
-        onChanged: (value) {
-          searchText = value.toLowerCase();
-
-          applyFilters();
-
-          setState(() {});
-        },
-      ),
-    );
-  }
-
-  Widget buildDogTypeDropdown() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-
-      child: DropdownButtonFormField<String>(
-        value: selectedDogType,
-
-        decoration: const InputDecoration(
-          labelText: 'Dog Type',
-          border: OutlineInputBorder(),
-        ),
-
-        items: dogTypes.map((type) {
-          return DropdownMenuItem(value: type, child: Text(type));
-        }).toList(),
-
-        onChanged: (value) {
-          selectedDogType = value ?? 'All';
-
-          applyFilters();
-
-          setState(() {});
-        },
+        onTap: () => openDog(dog['id']),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    if (loading) return const Center(child: CircularProgressIndicator());
 
     return Column(
       children: [
-        buildSearchBar(),
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: TextField(
+            decoration: const InputDecoration(
+              hintText: 'Search Name, ALA, Microchip',
+              prefixIcon: Icon(Icons.search),
+              border: OutlineInputBorder(),
+            ),
 
-        const SizedBox(height: 8),
+            onChanged: (value) {
+              searchText = value.toLowerCase();
 
-        buildDogTypeDropdown(),
+              applyFilters();
 
-        const SizedBox(height: 8),
+              setState(() {});
+            },
+          ),
+        ),
+
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+
+          child: DropdownButtonFormField(
+            value: selectedFilter,
+
+            items: filters
+                .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                .toList(),
+
+            onChanged: (value) {
+              selectedFilter = value!;
+
+              applyFilters();
+
+              setState(() {});
+            },
+          ),
+        ),
 
         Expanded(
-          child: RefreshIndicator(
-            onRefresh: loadDogs,
+          child: ListView.builder(
+            itemCount: filteredDogs.length,
 
-            child: ListView.builder(
-              itemCount: filteredDogs.length,
-
-              itemBuilder: (context, index) {
-                return buildDogTile(filteredDogs[index]);
-              },
-            ),
+            itemBuilder: (_, i) => buildDogTile(filteredDogs[i]),
           ),
         ),
       ],
