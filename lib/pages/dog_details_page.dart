@@ -1,12 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-import 'widgets/dog_photos_tab.dart';
-import 'widgets/dog_files_tab.dart';
-import 'widgets/dog_notes_tab.dart';
+import '../tabs/dog_photos_tab.dart';
+import '../tabs/dog_files_tab.dart';
+import '../tabs/dog_notes_tab.dart';
+import '../tabs/dog_correspondence_tab.dart';
+
+import '../services/dog_lock_service.dart';
+import '../pages/cards/spay_status_card.dart';
+
+import 'people_detail_page.dart';
+import 'dog_details_page.dart';
 
 class DogDetailsPage extends StatefulWidget {
-  final String dogId;
+  final dynamic dogId;
 
   const DogDetailsPage({super.key, required this.dogId});
 
@@ -14,240 +22,393 @@ class DogDetailsPage extends StatefulWidget {
   State<DogDetailsPage> createState() => _DogDetailsPageState();
 }
 
-class _DogDetailsPageState extends State<DogDetailsPage>
-    with SingleTickerProviderStateMixin {
+class _DogDetailsPageState extends State<DogDetailsPage> {
   final supabase = Supabase.instance.client;
 
   Map<String, dynamic>? dog;
+  Map<String, dynamic>? mother;
+  Map<String, dynamic>? father;
+  Map<String, dynamic>? owner;
+
+  String? heroImageUrl;
 
   bool loading = true;
-
-  bool isLocked = true;
-
-  bool isAdmin = false;
-
-  late TabController tabController;
+  bool wasUnlockedByUser = false;
 
   @override
   void initState() {
     super.initState();
-
-    tabController = TabController(length: 3, vsync: this);
-
     loadDog();
-
-    checkAdmin();
   }
 
   @override
   void dispose() {
-    tabController.dispose();
+    if (wasUnlockedByUser && dog != null) {
+      DogLockService.toggleLock(dogId: dog!['id'], locked: false);
+    }
+
     super.dispose();
   }
 
-  Future<void> checkAdmin() async {
-    final user = supabase.auth.currentUser;
-
-    if (user == null) return;
-
-    /// For now, any logged in user is admin
-    /// Later we connect to profiles.role
-
-    isAdmin = true;
-  }
-
-  Future<void> loadDog() async {
-    setState(() {
-      loading = true;
-    });
-
+  Future loadDog() async {
     try {
-      final response = await supabase
+      final dogResult = await supabase
           .from('dogs')
           .select()
-          .eq('id', widget.dogId)
-          .single();
+          .eq('id', widget.dogId.toString())
+          .maybeSingle();
 
-      dog = response;
+      if (dogResult == null) {
+        throw Exception("Dog not found");
+      }
 
-      isLocked = dog?['locked'] ?? true;
+      final photoResult = await supabase
+          .from('dog_photos')
+          .select('url')
+          .eq('dog_id', widget.dogId)
+          .limit(1);
+
+      Map<String, dynamic>? motherResult;
+      Map<String, dynamic>? fatherResult;
+      Map<String, dynamic>? ownerResult;
+
+      if (dogResult['mother_id'] != null) {
+        motherResult = await supabase
+            .from('dogs')
+            .select()
+            .eq('id', dogResult['mother_id'])
+            .maybeSingle();
+      }
+
+      if (dogResult['father_id'] != null) {
+        fatherResult = await supabase
+            .from('dogs')
+            .select()
+            .eq('id', dogResult['father_id'])
+            .maybeSingle();
+      }
+
+      if (dogResult['people_id'] != null) {
+        ownerResult = await supabase
+            .from('people')
+            .select()
+            .eq('people_id', dogResult['people_id'])
+            .maybeSingle();
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        dog = dogResult;
+        mother = motherResult;
+        father = fatherResult;
+        owner = ownerResult;
+
+        if (photoResult.isNotEmpty) {
+          heroImageUrl = photoResult.first['url'];
+        }
+
+        loading = false;
+      });
     } catch (e) {
-      debugPrint('Error loading dog: $e');
+      debugPrint("DogDetailsPage load error:");
+      debugPrint(e.toString());
+
+      if (!mounted) return;
+
+      setState(() {
+        loading = false;
+      });
+    }
+  }
+
+  String calculateAge(DateTime dob) {
+    final now = DateTime.now();
+
+    int years = now.year - dob.year;
+    int months = now.month - dob.month;
+
+    if (months < 0) {
+      years--;
+      months += 12;
     }
 
-    setState(() {
-      loading = false;
-    });
+    return "$years yr $months m";
   }
 
-  Future<void> toggleLock() async {
-    if (!isAdmin) return;
-
-    final newState = !isLocked;
-
-    await supabase
-        .from('dogs')
-        .update({'locked': newState})
-        .eq('id', widget.dogId);
-
-    setState(() {
-      isLocked = newState;
-    });
+  Future call(String phone) async {
+    await launchUrl(Uri.parse("tel:$phone"));
   }
 
-  void openLinkedDog(String? dogId) {
-    if (dogId == null) return;
+  Future email(String emailAddress) async {
+    await launchUrl(Uri.parse("mailto:$emailAddress"));
+  }
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => DogDetailsPage(dogId: dogId)),
+  Widget parentCard(String title, Map<String, dynamic>? parent) {
+    if (parent == null) {
+      return Card(
+        child: ListTile(
+          title: Text(title),
+          subtitle: const Text("Not recorded"),
+        ),
+      );
+    }
+
+    return Card(
+      child: ListTile(
+        leading: FutureBuilder(
+          future: supabase
+              .from('dog_photos')
+              .select('url')
+              .eq('dog_id', parent['id'])
+              .limit(1),
+
+          builder: (context, snapshot) {
+            if (!snapshot.hasData || snapshot.data!.isEmpty) {
+              return const Icon(Icons.pets);
+            }
+
+            return CircleAvatar(
+              backgroundImage: NetworkImage(snapshot.data!.first['url']),
+            );
+          },
+        ),
+
+        title: Text(parent['name'] ?? ''),
+
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (parent['ala_number'] != null)
+              Text("ALA: ${parent['ala_number'] ?? ''}"),
+
+            Text(parent['dog_type'] ?? ''),
+          ],
+        ),
+
+        trailing: const Icon(Icons.arrow_forward),
+
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => DogDetailsPage(dogId: parent['id'].toString()),
+            ),
+          );
+        },
+      ),
     );
   }
 
-  Widget buildHeader() {
-    final name = dog?['name'] ?? '';
+  void showSecondContactPopup() {
+    showDialog(
+      context: context,
 
-    final imageUrl = dog?['photo_url'];
+      builder: (_) => AlertDialog(
+        title: const Text("Second Contact"),
 
-    return Column(
-      children: [
-        /// IMAGE
-        Container(
-          width: 150,
-          height: 150,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
 
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            color: Colors.grey[200],
-          ),
-
-          clipBehavior: Clip.antiAlias,
-
-          child: imageUrl != null
-              ? Image.network(imageUrl, fit: BoxFit.cover)
-              : const Icon(Icons.pets, size: 60, color: Colors.grey),
-        ),
-
-        const SizedBox(height: 12),
-
-        /// NAME + LOCK
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
 
           children: [
             Text(
-              name,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              "${owner!['first_name_2nd']} ${owner!['last_name_2nd']}",
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
 
-            const SizedBox(width: 8),
+            Text(owner!['relationship_2nd'] ?? ''),
 
-            IconButton(
-              icon: Icon(isLocked ? Icons.lock : Icons.lock_open),
+            Row(
+              children: [
+                if (owner!['phone_2nd'] != null)
+                  IconButton(
+                    icon: const Icon(Icons.phone),
+                    onPressed: () => call(owner!['phone_2nd']),
+                  ),
 
-              color: isLocked ? Colors.red : Colors.green,
-
-              onPressed: toggleLock,
+                if (owner!['email_2nd'] != null)
+                  IconButton(
+                    icon: const Icon(Icons.email),
+                    onPressed: () => email(owner!['email_2nd']),
+                  ),
+              ],
             ),
           ],
         ),
-      ],
+      ),
     );
   }
 
-  Widget buildInfoTile({
-    required String label,
+  Widget ownerCard() {
+    if (owner == null) return const SizedBox();
 
-    required String? value,
+    return Card(
+      child: InkWell(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PeopleDetailPage(peopleId: owner!['people_id']),
+            ),
+          );
+        },
 
-    String? linkedDogId,
-  }) {
-    return ListTile(
-      title: Text(label),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
 
-      subtitle: Text(value ?? '', style: const TextStyle(fontSize: 16)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
 
-      trailing: linkedDogId != null ? const Icon(Icons.chevron_right) : null,
+            children: [
+              Text(
+                "${owner?['first_name_1st'] ?? ''} ${owner?['last_name_1st'] ?? ''}",
 
-      onTap: linkedDogId != null ? () => openLinkedDog(linkedDogId) : null,
-    );
-  }
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
 
-  Widget buildPedigree() {
-    return Column(
-      children: [
-        buildInfoTile(
-          label: 'Mother',
-          value: dog?['mother_name'],
-          linkedDogId: dog?['mother_id'],
-        ),
+              Row(
+                children: [
+                  if (owner!['phone_1st'] != null)
+                    IconButton(
+                      icon: const Icon(Icons.phone),
+                      onPressed: () => call(owner!['phone_1st']),
+                    ),
 
-        buildInfoTile(
-          label: 'Father',
-          value: dog?['father_name'],
-          linkedDogId: dog?['father_id'],
-        ),
+                  if (owner!['email_1st'] != null)
+                    IconButton(
+                      icon: const Icon(Icons.email),
+                      onPressed: () => email(owner!['email_1st']),
+                    ),
 
-        buildInfoTile(label: 'Owner', value: dog?['owner_name']),
-      ],
-    );
-  }
+                  IconButton(
+                    icon: const Icon(Icons.history),
+                    onPressed: () {
+                      DefaultTabController.of(context)?.animateTo(3);
+                    },
+                  ),
+                ],
+              ),
 
-  Widget buildTabs() {
-    return Expanded(
-      child: Column(
-        children: [
-          TabBar(
-            controller: tabController,
-            tabs: const [
-              Tab(text: 'Photos'),
-
-              Tab(text: 'Files'),
-
-              Tab(text: 'Notes'),
+              if (owner!['first_name_2nd'] != null)
+                ActionChip(
+                  label: const Text("2nd Contact"),
+                  onPressed: showSecondContactPopup,
+                ),
             ],
           ),
-
-          Expanded(
-            child: TabBarView(
-              controller: tabController,
-
-              children: [
-                DogPhotosTab(dogId: widget.dogId),
-
-                DogFilesTab(dogId: widget.dogId),
-
-                DogNotesTab(dogId: widget.dogId),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Dog Details')),
+    if (loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
-      body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : dog == null
-          ? const Center(child: Text('Dog not found'))
-          : Column(
-              children: [
-                const SizedBox(height: 12),
+    final dob = DateTime.tryParse(dog?['date_of_birth'] ?? '');
 
-                buildHeader(),
+    final age = dob != null ? calculateAge(dob) : '';
 
-                const SizedBox(height: 8),
+    final ageYears = dob != null ? DateTime.now().year - dob.year : 0;
 
-                buildPedigree(),
+    return DefaultTabController(
+      length: 4,
 
-                buildTabs(),
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(dog?['name'] ?? 'Dog Details'),
+          actions: [
+            IconButton(
+              icon: Icon(dog!['locked'] ? Icons.lock : Icons.lock_open),
+
+              onPressed: () async {
+                await DogLockService.toggleLock(
+                  dogId: dog!['id'],
+                  locked: dog!['locked'],
+                );
+
+                if (dog!['locked']) wasUnlockedByUser = true;
+
+                loadDog();
+              },
+            ),
+
+            IconButton(
+              icon: const Icon(Icons.edit),
+              onPressed: dog!['locked'] ? null : () {},
+            ),
+          ],
+        ),
+
+        body: Column(
+          children: [
+            if (heroImageUrl != null)
+              SizedBox(
+                height: 250,
+                width: double.infinity,
+                child: Image.network(heroImageUrl!, fit: BoxFit.cover),
+              ),
+
+            Padding(
+              padding: const EdgeInsets.all(12),
+
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+
+                children: [
+                  Text(dog!['dog_type']),
+
+                  Text(
+                    age,
+                    style: TextStyle(
+                      color: ageYears > 5 ? Colors.red : Colors.black,
+                    ),
+                  ),
+
+                  parentCard("Mother", mother),
+
+                  parentCard("Father", father),
+
+                  ownerCard(),
+
+                  if (dog != null)
+                    SpayStatusCard(dog: dog!, onUpdated: loadDog),
+                ],
+              ),
+            ),
+
+            const TabBar(
+              tabs: [
+                Tab(text: "Photos"),
+                Tab(text: "Files"),
+                Tab(text: "Notes"),
+                Tab(text: "Correspondence"),
               ],
             ),
+
+            Expanded(
+              child: TabBarView(
+                children: [
+                  DogPhotosTab(dogId: dog?['id']?.toString() ?? ''),
+
+                  DogFilesTab(dogId: dog!['id']),
+
+                  DogNotesTab(dogId: dog!['id']),
+
+                  DogCorrespondenceTab(dogId: dog!['id']),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
