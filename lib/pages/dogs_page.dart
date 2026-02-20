@@ -43,7 +43,10 @@ class _DogsPageState extends State<DogsPage> {
     loading = true;
     setState(() {});
 
-    final response = await supabase.from('dogs').select().order('dog_name');
+    final response = await supabase
+        .from('dogs')
+        .select()
+        .order('dob', ascending: false);
 
     allDogs = List<Map<String, dynamic>>.from(response);
 
@@ -57,12 +60,15 @@ class _DogsPageState extends State<DogsPage> {
     filteredDogs = allDogs.where((dog) {
       final name = (dog['dog_name'] ?? '').toString().toLowerCase();
 
+      final phone = (dog['phone_1st'] ?? '').toLowerCase();
+
       final microchip = (dog['microchip'] ?? '').toString().toLowerCase();
 
       final ala = (dog['dog_ala'] ?? '').toString().toLowerCase();
 
       final matchesSearch =
           name.contains(searchText) ||
+          phone.contains(searchText) ||
           microchip.contains(searchText) ||
           ala.contains(searchText);
 
@@ -178,6 +184,7 @@ class _DogsPageState extends State<DogsPage> {
 
         title: Text(
           dog['dog_name'] ?? '',
+
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
 
@@ -185,6 +192,8 @@ class _DogsPageState extends State<DogsPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('ALA: ${dog['dog_ala'] ?? ''}'),
+
+            Text(dog['dog_type'] ?? ''),
 
             Text('Microchip: ${dog['microchip'] ?? ''}'),
 

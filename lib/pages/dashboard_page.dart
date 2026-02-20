@@ -1,94 +1,172 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'dogs_page.dart';
 import 'people_page.dart';
 import 'litters_page.dart';
 import 'calendar_page.dart';
 import 'vehicle_log_page.dart';
-import 'vehicle_reports_page.dart';
+import 'reports_page.dart';
 
-class DashboardPage extends StatelessWidget {
+class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 6,
-      child: Scaffold(
-        appBar: AppBar(
-          toolbarHeight: 90,
-          automaticallyImplyLeading: false,
+  State<DashboardPage> createState() => _DashboardPageState();
+}
 
-          title: Row(
-            children: [
-              const Spacer(),
+class _DashboardPageState extends State<DashboardPage>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
 
-              Row(
-                children: [
-                  Image.asset('assets/images/amity_logo.png', height: 60),
+  @override
+  void initState() {
+    super.initState();
 
-                  const SizedBox(width: 16),
+    _tabController = TabController(length: 6, vsync: this);
+  }
 
-                  const Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Amity Labradoodles',
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+  @override
+  void dispose() {
+    _tabController.dispose();
 
-                      Text(
-                        'Management System v3',
-                        style: TextStyle(fontSize: 16),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+    super.dispose();
+  }
 
-              const Spacer(),
+  Widget buildTabButton({
+    required IconData icon,
+    required String label,
+    required int tabIndex,
+  }) {
+    final isSelected = _tabController.index == tabIndex;
 
-              IconButton(
-                icon: const Icon(Icons.logout),
-                tooltip: 'Logout',
-                onPressed: () async {
-                  await Supabase.instance.client.auth.signOut();
-                },
-              ),
-            ],
-          ),
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _tabController.index = tabIndex;
+        });
+      },
 
-          bottom: const TabBar(
-            isScrollable: false,
-            tabs: [
-              Tab(icon: Icon(Icons.pets), text: 'Dogs'),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
 
-              Tab(icon: Icon(Icons.people), text: 'People'),
-
-              Tab(icon: Icon(Icons.child_care), text: 'Litters'),
-
-              Tab(icon: Icon(Icons.calendar_month), text: 'Calendar'),
-
-              Tab(icon: Icon(Icons.directions_car), text: 'Vehicles'),
-
-              Tab(icon: Icon(Icons.bar_chart), text: 'Reports'),
-            ],
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: isSelected ? Colors.teal : Colors.transparent,
+              width: 3,
+            ),
           ),
         ),
 
-        body: TabBarView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+
           children: [
-            DogsPage(),
-            PeoplePage(),
-            LittersPage(),
-            CalendarPage(),
-            VehicleLogPage(),
-            VehicleReportsPage(),
+            Icon(icon, size: 26, color: isSelected ? Colors.teal : Colors.grey),
+
+            const SizedBox(height: 4),
+
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: isSelected ? Colors.teal : Colors.grey,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildDashboardTabs() {
+    return Container(
+      color: Colors.white,
+
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: buildTabButton(
+                  icon: Icons.pets,
+                  label: "Dogs",
+                  tabIndex: 0,
+                ),
+              ),
+
+              Expanded(
+                child: buildTabButton(
+                  icon: Icons.people,
+                  label: "People",
+                  tabIndex: 1,
+                ),
+              ),
+
+              Expanded(
+                child: buildTabButton(
+                  icon: Icons.child_care,
+                  label: "Litters",
+                  tabIndex: 2,
+                ),
+              ),
+            ],
+          ),
+
+          Row(
+            children: [
+              Expanded(
+                child: buildTabButton(
+                  icon: Icons.calendar_today,
+                  label: "Calendar",
+                  tabIndex: 3,
+                ),
+              ),
+
+              Expanded(
+                child: buildTabButton(
+                  icon: Icons.directions_car,
+                  label: "Vehicles",
+                  tabIndex: 4,
+                ),
+              ),
+
+              Expanded(
+                child: buildTabButton(
+                  icon: Icons.bar_chart,
+                  label: "Reports",
+                  tabIndex: 5,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Column(
+          children: [
+            buildDashboardTabs(),
+
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+
+                children: const [
+                  DogsPage(),
+                  PeoplePage(),
+                  LittersPage(),
+                  CalendarPage(),
+                  VehicleLogPage(),
+                  ReportsPage(),
+                ],
+              ),
+            ),
           ],
         ),
       ),

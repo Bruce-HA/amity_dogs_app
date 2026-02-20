@@ -23,7 +23,9 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
   final endKmController = TextEditingController();
   final notesController = TextEditingController();
 
-  bool isBusiness = true;
+  /// REQUIRED FIX: I30 defaults to Private
+  bool isBusiness = false;
+
   bool loading = true;
   bool saving = false;
 
@@ -32,6 +34,14 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
   @override
   void initState() {
     super.initState();
+
+    /// REQUIRED FIX: Ensure correct default on startup
+    if (selectedVehicle == 'I30') {
+      isBusiness = false;
+    } else if (selectedVehicle == 'Staria') {
+      isBusiness = true;
+    }
+
     loadAllVehicleKms();
   }
 
@@ -109,6 +119,13 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
       onTap: () {
         setState(() {
           selectedVehicle = vehicle;
+
+          /// REQUIRED FIX: set default trip type per vehicle
+          if (vehicle == 'I30') {
+            isBusiness = false;
+          } else if (vehicle == 'Staria') {
+            isBusiness = true;
+          }
         });
       },
 
@@ -118,7 +135,6 @@ class _VehicleLogPageState extends State<VehicleLogPage> {
 
         decoration: BoxDecoration(
           color: isSelected ? Colors.teal.shade200 : Colors.grey.shade200,
-
           borderRadius: BorderRadius.circular(16),
         ),
 
