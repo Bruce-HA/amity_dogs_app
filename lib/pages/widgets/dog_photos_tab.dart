@@ -68,14 +68,25 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
     final description = photo['description'] ?? "";
 
     return GestureDetector(
-      onTap: () => openPhoto(fullUrl, description),
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        child: Image.network(
-          fullUrl,
-          fit: BoxFit.cover,
-        ),
-      ),
+      onTap: () async {
+
+        final result =
+            await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PhotoViewerPage(
+              imageUrl: fullUrl,
+              photo: photo,
+              dogId: widget.dogId,
+              dogAla: widget.dogAla,
+            ),
+          ),
+        );
+
+        if (result == true) {
+          loadPhotos();
+        }
+      },
     );
   }
 

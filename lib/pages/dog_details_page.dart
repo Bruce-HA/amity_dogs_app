@@ -43,6 +43,9 @@ class _DogDetailsPageState extends State<DogDetailsPage> {
 
   String? heroImageUrl;
 
+  // inserted it here
+  int heroImageVersion = DateTime.now().millisecondsSinceEpoch;
+
   bool loading = true;
   bool editMode = false;
 
@@ -221,7 +224,7 @@ class _DogDetailsPageState extends State<DogDetailsPage> {
     final fileName = file.name;
 
     final storagePath =
-        "${dog!['id']}/photo/$fileName";
+        "${dog!['id']}/${dog!['dog_ala']}/photo/$fileName";
 
     // Upload to Supabase Storage
     await supabase.storage
@@ -400,19 +403,31 @@ class _DogDetailsPageState extends State<DogDetailsPage> {
           child:Column(
             children:[
 
-            if (heroImageUrl != null)
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxHeight: 300,
-                    ),
-                    child: Image.network(
-                      heroImageUrl!,
-                      fit: BoxFit.contain,
-                    ),
+              if (heroImageUrl != null)
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxHeight: 300,
+                      ),
+                      child: Image.network(
+                        "https://phkwizyrpfzoecugpshb.supabase.co/storage/v1/object/public/dog_files/${dog!['id']}/${dog!['dog_ala']}/photo/hero.jpg?v=$heroImageVersion",
+
+                        height: 250,
+                        width: double.infinity,
+
+                        fit: BoxFit.contain,
+
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            height: 250,
+                            color: Colors.grey[200],
+                            child: const Icon(Icons.pets, size: 80),
+                          );
+                        },
+                      )
                   ),
                 ),
               ),
@@ -487,7 +502,16 @@ class _DogDetailsPageState extends State<DogDetailsPage> {
               child: TabBarView(
 
                 children:[
-                  DogPhotosTab(dogId:dog!['id'].toString()),
+                  DogPhotosTab(
+                    dogId: dog!['id'].toString(),
+                    dogAla: dog!['dog_ala'] ?? '',
+                    onHeroChanged: () {
+                      setState(() {
+                        heroImageVersion =
+                            DateTime.now().millisecondsSinceEpoch;
+                      });
+                    },
+                  ),
                   DogFilesTab(dogId:dog!['id']),
                   DogNotesTab(dogId:dog!['id']),
                   DogCorrespondenceTab(dogId:dog!['id']),
