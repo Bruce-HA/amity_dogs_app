@@ -28,6 +28,8 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
 
   bool loading = true;
 
+  String? heroFileName;
+
   final String baseUrl =
       "https://phkwizyrpfzoecugpshb.supabase.co/storage/v1/object/public/dog_files";
 
@@ -38,9 +40,7 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
   }
 
   /*
-  =====================================================
   LOAD PHOTOS
-  =====================================================
   */
 
   Future<void> loadPhotos() async {
@@ -55,26 +55,60 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
 
     photos = List<Map<String, dynamic>>.from(response);
 
+    await detectHero();
+
     loading = false;
     setState(() {});
   }
 
   /*
-  =====================================================
-  BUILD STORAGE URL
-  =====================================================
+  DETECT HERO FILE
+  */
+
+  Future<void> detectHero() async {
+
+    heroFileName = null;
+
+    try {
+
+      final heroBytes = await supabase.storage
+          .from('dog_files')
+          .download(
+        "${widget.dogId}/${widget.dogAla}/photo/hero.jpg?v=${DateTime.now().millisecondsSinceEpoch}",
+      );
+
+      for (final photo in photos) {
+
+        final fileName = photo['url'];
+
+        final bytes = await supabase.storage
+            .from('dog_files')
+            .download(
+          "${widget.dogId}/${widget.dogAla}/photo/$fileName",
+        );
+
+        if (bytes.length == heroBytes.length) {
+
+          heroFileName = fileName;
+
+          break;
+        }
+      }
+
+    } catch (_) {}
+
+  }
+
+  /*
+  BUILD URL
   */
 
   String getFullUrl(String fileName) {
-    fileName = fileName.split("/").last;
-
     return "$baseUrl/${widget.dogId}/${widget.dogAla}/photo/$fileName";
   }
 
   /*
-  =====================================================
   UPLOAD PHOTO
-  =====================================================
   */
 
   Future<void> uploadPhoto() async {
@@ -90,16 +124,13 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
     final fileName =
         "${DateTime.now().millisecondsSinceEpoch}.jpg";
 
-    final storagePath =
+    final path =
         "${widget.dogId}/${widget.dogAla}/photo/$fileName";
 
     await supabase.storage
         .from('dog_files')
-        .upload(
-          storagePath,
-          File(file.path),
-          fileOptions: const FileOptions(upsert: true),
-        );
+        .upload(path, File(file.path),
+            fileOptions: const FileOptions(upsert: true));
 
     await supabase.from('dog_photos').insert({
       'dog_id': widget.dogId,
@@ -111,17 +142,17 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
   }
 
   /*
-  =====================================================
   PHOTO CARD
-  =====================================================
   */
 
   Widget buildPhotoCard(Map<String, dynamic> photo) {
-    final fileName = photo['url'] ?? "";
+    final fileName = photo['url'];
 
-    final fullUrl = getFullUrl(fileName);
+    final url = getFullUrl(fileName);
 
     final description = photo['description'] ?? "";
+
+    final isHero = fileName == heroFileName;
 
     return GestureDetector(
       onTap: () async {
@@ -129,7 +160,7 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
           context,
           MaterialPageRoute(
             builder: (_) => PhotoViewerPage(
-              imageUrl: fullUrl,
+              imageUrl: url,
               photo: photo,
               dogId: widget.dogId,
               dogAla: widget.dogAla,
@@ -138,36 +169,69 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
         );
 
         if (result == true) {
+
+          // Force fresh hero detection
+          heroFileName = null;
+
           await loadPhotos();
+
+          // notify parent
           widget.onHeroChanged?.call();
+
+          // force UI refresh
+          if (mounted) {
+            setState(() {});
+          }
         }
       },
       child: Card(
         clipBehavior: Clip.antiAlias,
         child: Column(
-          crossAxisAlignment:
-              CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: Image.network(
-                fullUrl,
-                width: double.infinity,
-                fit: BoxFit.cover,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: Image.network(
+                      url,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  if (isHero)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Container(
+                        padding:
+                            const EdgeInsets.all(4),
+                        decoration:
+                            const BoxDecoration(
+                          color: Colors.amber,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.star,
+                          size: 16,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
             if (description.isNotEmpty)
               Container(
-                width: double.infinity,
                 padding:
                     const EdgeInsets.all(6),
-                color: Colors.grey[100],
+                width: double.infinity,
+                color: Colors.grey[200],
                 child: Text(
                   description,
                   maxLines: 2,
                   overflow:
                       TextOverflow.ellipsis,
-                  style:
-                      const TextStyle(fontSize: 12),
+                  style: const TextStyle(
+                      fontSize: 12),
                 ),
               ),
           ],
@@ -177,9 +241,7 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
   }
 
   /*
-  =====================================================
   UI
-  =====================================================
   */
 
   @override
@@ -191,40 +253,25 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
 
     return Column(
       children: [
-        Padding(
-          padding:
-              const EdgeInsets.all(8),
-          child: ElevatedButton.icon(
-            onPressed: uploadPhoto,
-            icon: const Icon(
-                Icons.add_a_photo),
-            label:
-                const Text("Upload Photo"),
-          ),
+        ElevatedButton.icon(
+          onPressed: uploadPhoto,
+          icon: const Icon(Icons.add_a_photo),
+          label: const Text("Upload Photo"),
         ),
         Expanded(
-          child: photos.isEmpty
-              ? const Center(
-                  child: Text(
-                      "No photos uploaded"))
-              : GridView.builder(
-                  padding:
-                      const EdgeInsets.all(8),
-                  itemCount:
-                      photos.length,
-                  gridDelegate:
-                      const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    crossAxisSpacing:
-                        8,
-                    mainAxisSpacing: 8,
-                  ),
-                  itemBuilder:
-                      (context, index) {
-                    return buildPhotoCard(
-                        photos[index]);
-                  },
-                ),
+          child: GridView.builder(
+            padding:
+                const EdgeInsets.all(8),
+            itemCount: photos.length,
+            gridDelegate:
+                const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+            ),
+            itemBuilder: (context, index) =>
+                buildPhotoCard(photos[index]),
+          ),
         ),
       ],
     );

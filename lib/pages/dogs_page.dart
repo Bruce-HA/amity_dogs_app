@@ -33,6 +33,10 @@ class _DogsPageState extends State<DogsPage> {
     'Spay Overdue',
   ];
 
+  // YOUR Supabase project URL
+  final String baseUrl =
+      'https://phkwizyrpfzoecugpshb.supabase.co/storage/v1/object/public/dog_files';
+
   @override
   void initState() {
     super.initState();
@@ -43,10 +47,8 @@ class _DogsPageState extends State<DogsPage> {
     loading = true;
     setState(() {});
 
-    final response = await supabase
-        .from('dogs')
-        .select()
-        .order('dob', ascending: false);
+    final response =
+        await supabase.from('dogs').select().order('dob', ascending: false);
 
     allDogs = List<Map<String, dynamic>>.from(response);
 
@@ -107,19 +109,15 @@ class _DogsPageState extends State<DogsPage> {
       return matchesSearch && matchesFilter;
     }).toList();
 
-    // Sort by spay_due ascending (closest first)
     filteredDogs.sort((a, b) {
       final aDue = a['spay_due'];
       final bDue = b['spay_due'];
 
       if (aDue == null && bDue == null) return 0;
-
       if (aDue == null) return 1;
-
       if (bDue == null) return -1;
 
       final aDate = DateTime.parse(aDue);
-
       final bDate = DateTime.parse(bDue);
 
       return aDate.compareTo(bDate);
@@ -130,11 +128,9 @@ class _DogsPageState extends State<DogsPage> {
     if (dobStr == null) return '';
 
     final dob = DateTime.parse(dobStr);
-
     final now = DateTime.now();
 
     int years = now.year - dob.year;
-
     int months = now.month - dob.month;
 
     if (months < 0) {
@@ -155,13 +151,8 @@ class _DogsPageState extends State<DogsPage> {
 
     final years = totalMonths / 12.0;
 
-    if (years < 1) {
-      return Colors.orange;
-    }
-
-    if (years < 5) {
-      return Colors.green;
-    }
+    if (years < 1) return Colors.orange;
+    if (years < 5) return Colors.green;
 
     return Colors.red;
   }
@@ -173,18 +164,51 @@ class _DogsPageState extends State<DogsPage> {
     );
   }
 
+  // BUILD HERO IMAGE
+  Widget buildHeroImage(Map<String, dynamic> dog) {
+    final id = dog['id'];
+    final ala = dog['dog_ala'];
+
+    if (id == null || ala == null) {
+      return Image.asset(
+        'assets/images/no_photo.png',
+        width: 72,
+        height: 72,
+        fit: BoxFit.cover,
+      );
+    }
+
+    final url = '$baseUrl/$id/$ala/photo/hero.jpg';
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Image.network(
+        url,
+        width: 72,
+        height: 72,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) {
+          return Image.asset(
+            'assets/images/no_photo.png',
+            width: 72,
+            height: 72,
+            fit: BoxFit.cover,
+          );
+        },
+      ),
+    );
+  }
+
   Widget buildDogTile(Map<String, dynamic> dog) {
     final age = calculateAge(dog['dob']);
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-
       child: ListTile(
-        leading: const Icon(Icons.pets, size: 40),
+        leading: buildHeroImage(dog),
 
         title: Text(
           dog['dog_name'] ?? '',
-
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
 
@@ -234,12 +258,9 @@ class _DogsPageState extends State<DogsPage> {
               prefixIcon: Icon(Icons.search),
               border: OutlineInputBorder(),
             ),
-
             onChanged: (value) {
               searchText = value.toLowerCase();
-
               applyFilters();
-
               setState(() {});
             },
           ),
@@ -247,19 +268,14 @@ class _DogsPageState extends State<DogsPage> {
 
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
-
           child: DropdownButtonFormField(
             value: selectedFilter,
-
             items: filters
                 .map((e) => DropdownMenuItem(value: e, child: Text(e)))
                 .toList(),
-
             onChanged: (value) {
               selectedFilter = value!;
-
               applyFilters();
-
               setState(() {});
             },
           ),
@@ -268,7 +284,6 @@ class _DogsPageState extends State<DogsPage> {
         Expanded(
           child: ListView.builder(
             itemCount: filteredDogs.length,
-
             itemBuilder: (_, i) => buildDogTile(filteredDogs[i]),
           ),
         ),
