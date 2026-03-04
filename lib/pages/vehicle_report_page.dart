@@ -396,7 +396,7 @@ class _VehicleReportPageState extends State<VehicleReportPage> {
         child: Column(
           children: [
             DropdownButtonFormField(
-              value: tripFilter,
+              initialValue: tripFilter,
 
               items: const [
                 DropdownMenuItem(value: "Both", child: Text("Both")),

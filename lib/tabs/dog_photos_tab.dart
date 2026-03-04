@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 
 import 'photo_viewer_page.dart';
 
@@ -25,11 +25,7 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
   final supabase = Supabase.instance.client;
 
   List<Map<String, dynamic>> photos = [];
-
   bool loading = true;
-
-  final String baseUrl =
-      "https://phkwizyrpfzoecugpshb.supabase.co/storage/v1/object/public/dog_files";
 
   @override
   void initState() {
@@ -44,8 +40,7 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
   */
 
   Future<void> loadPhotos() async {
-    loading = true;
-    setState(() {});
+    setState(() => loading = true);
 
     final response = await supabase
         .from('dog_photos')
@@ -55,20 +50,64 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
 
     photos = List<Map<String, dynamic>>.from(response);
 
-    loading = false;
-    setState(() {});
+    setState(() => loading = false);
   }
 
   /*
   =====================================================
-  BUILD STORAGE URL
+  STORAGE HELPERS
   =====================================================
   */
 
-  String getFullUrl(String fileName) {
-    fileName = fileName.split("/").last;
+  String buildStoragePath(String fileName) {
+    return "${widget.dogAla}/photos/$fileName";
+  }
 
-    return "$baseUrl/${widget.dogId}/${widget.dogAla}/photo/$fileName";
+  String getFullUrl(String fileName) {
+    return supabase.storage
+        .from('dog_files')
+        .getPublicUrl("${widget.dogAla}/photos/$fileName");
+  }
+
+  /*
+  =====================================================
+  SET HERO
+  =====================================================
+  */
+
+  Future<void> setHero(Map<String, dynamic> photo) async {
+    final photoId = photo['id'];
+    final fileName = photo['url'];
+
+    if (photoId == null || fileName == null) return;
+
+    // Reset all hero flags
+    await supabase
+        .from('dog_photos')
+        .update({'is_hero': false})
+        .eq('dog_id', widget.dogId);
+
+    // Set selected photo as hero
+    await supabase
+        .from('dog_photos')
+        .update({'is_hero': true})
+        .eq('id', photoId);
+
+    // Copy file to hero.jpg
+    final originalPath = buildStoragePath(fileName);
+    final heroPath = buildStoragePath("hero.jpg");
+
+    final bytes =
+        await supabase.storage.from('dog_files').download(originalPath);
+
+    await supabase.storage.from('dog_files').uploadBinary(
+          heroPath,
+          bytes,
+          fileOptions: const FileOptions(upsert: true),
+        );
+
+    await loadPhotos();
+    widget.onHeroChanged?.call();
   }
 
   /*
@@ -78,33 +117,33 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
   */
 
   Future<void> uploadPhoto() async {
-    final picker = ImagePicker();
-
-    final file = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 90,
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
     );
 
-    if (file == null) return;
+    if (result == null || result.files.single.path == null) return;
 
-    final fileName =
-        "${DateTime.now().millisecondsSinceEpoch}.jpg";
+    final file = File(result.files.single.path!);
 
-    final storagePath =
-        "${widget.dogId}/${widget.dogAla}/photo/$fileName";
+    final extension = file.path.split('.').last.toLowerCase();
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final fileName = "$timestamp.$extension";
+
+    final storagePath = buildStoragePath(fileName);
 
     await supabase.storage
         .from('dog_files')
         .upload(
           storagePath,
-          File(file.path),
-          fileOptions: const FileOptions(upsert: true),
+          file,
         );
 
     await supabase.from('dog_photos').insert({
       'dog_id': widget.dogId,
       'url': fileName,
       'description': '',
+      'is_hero': false,
     });
 
     await loadPhotos();
@@ -118,10 +157,9 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
 
   Widget buildPhotoCard(Map<String, dynamic> photo) {
     final fileName = photo['url'] ?? "";
+    final description = photo['description'] ?? "";
 
     final fullUrl = getFullUrl(fileName);
-
-    final description = photo['description'] ?? "";
 
     return GestureDetector(
       onTap: () async {
@@ -143,11 +181,15 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
         }
       },
       child: Card(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
         clipBehavior: Clip.antiAlias,
         child: Column(
-          crossAxisAlignment:
-              CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+
+            // IMAGE
             Expanded(
               child: Image.network(
                 fullUrl,
@@ -155,19 +197,18 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
                 fit: BoxFit.cover,
               ),
             ),
+
+            // DESCRIPTION BELOW IMAGE
             if (description.isNotEmpty)
-              Container(
-                width: double.infinity,
-                padding:
-                    const EdgeInsets.all(6),
-                color: Colors.grey[100],
+              Padding(
+                padding: const EdgeInsets.all(8),
                 child: Text(
                   description,
                   maxLines: 2,
-                  overflow:
-                      TextOverflow.ellipsis,
-                  style:
-                      const TextStyle(fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                  ),
                 ),
               ),
           ],
@@ -186,43 +227,35 @@ class _DogPhotosTabState extends State<DogPhotosTab> {
   Widget build(BuildContext context) {
     if (loading) {
       return const Center(
-          child: CircularProgressIndicator());
+        child: CircularProgressIndicator(),
+      );
     }
 
     return Column(
       children: [
         Padding(
-          padding:
-              const EdgeInsets.all(8),
+          padding: const EdgeInsets.all(8),
           child: ElevatedButton.icon(
             onPressed: uploadPhoto,
-            icon: const Icon(
-                Icons.add_a_photo),
-            label:
-                const Text("Upload Photo"),
+            icon: const Icon(Icons.add_a_photo),
+            label: const Text("Add Photo"),
           ),
         ),
         Expanded(
           child: photos.isEmpty
-              ? const Center(
-                  child: Text(
-                      "No photos uploaded"))
+              ? const Center(child: Text("No photos uploaded"))
               : GridView.builder(
-                  padding:
-                      const EdgeInsets.all(8),
-                  itemCount:
-                      photos.length,
+                  padding: const EdgeInsets.all(8),
+                  itemCount: photos.length,
                   gridDelegate:
-                      const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    crossAxisSpacing:
-                        8,
-                    mainAxisSpacing: 8,
-                  ),
-                  itemBuilder:
-                      (context, index) {
-                    return buildPhotoCard(
-                        photos[index]);
+                    const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 3,
+                      crossAxisSpacing: 8,
+                      mainAxisSpacing: 8,
+                      childAspectRatio: 0.75, // 🔥 key line
+                    ),
+                  itemBuilder: (context, index) {
+                    return buildPhotoCard(photos[index]);
                   },
                 ),
         ),

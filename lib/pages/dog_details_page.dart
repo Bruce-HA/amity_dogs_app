@@ -1,76 +1,103 @@
-
-// FULL PRODUCTION DogDetailsPage
-// Bottom-sheet searchable selectors
-// Inline editing
-// Confirm save / cancel
-// Hero image editing
-// Lock system preserved
-
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:image_picker/image_picker.dart';
-import 'dart:io';
 
 import '../tabs/dog_photos_tab.dart';
 import '../tabs/dog_files_tab.dart';
 import '../tabs/dog_notes_tab.dart';
 import '../tabs/dog_correspondence_tab.dart';
-
-import '../services/dog_lock_service.dart';
 import '../pages/cards/spay_status_card.dart';
 
-import 'people_detail_page.dart';
-
 class DogDetailsPage extends StatefulWidget {
-  final dynamic dogId;
+  final String dogId;
 
-  const DogDetailsPage({super.key, required this.dogId});
+  const DogDetailsPage({
+    super.key,
+    required this.dogId,
+  });
 
   @override
   State<DogDetailsPage> createState() => _DogDetailsPageState();
 }
 
 class _DogDetailsPageState extends State<DogDetailsPage> {
-
   final supabase = Supabase.instance.client;
 
   Map<String, dynamic>? dog;
-  Map<String, dynamic>? originalDog;
-
-  List<Map<String, dynamic>> allDogs = [];
-  List<Map<String, dynamic>> allPeople = [];
-  List<String> dogTypes = [];
-
-  String? heroImageUrl;
-
-  // inserted it here
-  int heroImageVersion = DateTime.now().millisecondsSinceEpoch;
-
   bool loading = true;
   bool editMode = false;
-
   final nameController = TextEditingController();
   final alaController = TextEditingController();
   final microchipController = TextEditingController();
 
-  String? selectedDogType;
-  String? selectedSex;
-  String? selectedDesexed;
-  String? selectedMotherId;
-  String? selectedFatherId;
-  String? selectedOwnerId;
-  DateTime? selectedSpayDue;
+  String calculateAge(String? dobString) {
+  if (dobString == null) return "";
+
+  final dob = DateTime.tryParse(dobString);
+  if (dob == null) return "";
+
+  final now = DateTime.now();
+
+  int years = now.year - dob.year;
+  int months = now.month - dob.month;
+
+  if (months < 0) {
+    years--;
+    months += 12;
+  }
+
+  return "$years y $months m";
+}
 
   @override
   void initState() {
     super.initState();
     loadDog();
   }
+  Future<void> saveChanges() async {
+    await supabase.from('dogs').update({
+      'dog_name': nameController.text,
+      'dog_ala': alaController.text,
+      'microchip': microchipController.text,
+    }).eq('id', dog!['id']);
 
-  Future loadDog() async {
+    await loadDog();
+  }
+/// spay chip 
+  Widget buildSpayChip() {
+    final spayDueString = dog?['spay_due'];
 
-    loading = true;
-    setState(() {});
+    if (spayDueString == null) return const SizedBox.shrink();
+
+    final spayDate = DateTime.tryParse(spayDueString);
+    if (spayDate == null) return const SizedBox.shrink();
+
+    final now = DateTime.now();
+    final days = spayDate.difference(now).inDays;
+
+    Color chipColor = Colors.green;
+
+    if (days <= 60) {
+      chipColor = Colors.red;
+    } else if (days <= 90) {
+      chipColor = Colors.orange;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Chip(
+        label: Text(
+          "Spay Due: ${spayDate.day}/${spayDate.month}/${spayDate.year}",
+          style: const TextStyle(color: Colors.white),
+        ),
+        backgroundColor: chipColor,
+      ),
+    );
+  }/// 
+/// 
+/// 
+/// Spay chip above 
+  Future<void> loadDog() async {
+    setState(() => loading = true);
 
     final result = await supabase
         .from('dogs')
@@ -78,449 +105,270 @@ class _DogDetailsPageState extends State<DogDetailsPage> {
         .eq('id', widget.dogId)
         .maybeSingle();
 
-    if(result == null){
-      loading = false;
-      setState(() {});
+    if (result == null) {
+      setState(() {
+        loading = false;
+        dog = null;
+      });
       return;
     }
 
     dog = result;
-    originalDog = Map<String, dynamic>.from(result);
 
     nameController.text = dog?['dog_name'] ?? '';
     alaController.text = dog?['dog_ala'] ?? '';
     microchipController.text = dog?['microchip'] ?? '';
 
-    selectedDogType = dog?['dog_type'];
-    selectedSex = dog?['sex'];
-    selectedDesexed = dog?['desexed'];
-    selectedMotherId = dog?['mother_id']?.toString();
-    selectedFatherId = dog?['father_id']?.toString();
-    selectedOwnerId = dog?['people_id']?.toString();
-
-    if(dog?['spay_due'] != null){
-      selectedSpayDue = DateTime.tryParse(dog!['spay_due']);
-    }
-
-    await loadLists();
-    await loadHeroImage();
-
-    loading = false;
-    setState(() {});
+    setState(() => loading = false);
   }
 
-  Future loadLists() async {
-
-    allDogs = List<Map<String,dynamic>>.from(
-        await supabase.from('dogs').select('id, dog_name').order('dog_name'));
-
-    allPeople = List<Map<String,dynamic>>.from(
-        await supabase.from('people').select().order('first_name_1st'));
-
-    final types = await supabase.from('dogs').select('dog_type');
-
-    dogTypes = types
-        .map((e)=>e['dog_type'].toString())
-        .toSet()
-        .toList()
-      ..sort();
-  }
-
-  Future loadHeroImage() async {
-
-    final photo = await supabase
+  Future<Map<String, dynamic>?> _getHeroPhoto() async {
+    return await supabase
         .from('dog_photos')
-        .select('url')
+        .select()
         .eq('dog_id', widget.dogId)
-        .limit(1);
-
-    if (photo.isNotEmpty) {
-
-      final fileName = photo.first['url'];
-
-      final fullUrl =
-          "https://phkwizyrpfzoecugpshb.supabase.co/storage/v1/object/public/dog_files/${widget.dogId}/photo/$fileName";
-
-      print("Hero URL: $fullUrl");
-
-      heroImageUrl = fullUrl;
-    }
+        .eq('is_hero', true)
+        .maybeSingle();
   }
 
+  Future<Map<String, dynamic>?> getDogById(String? id) async {
+    if (id == null) return null;
 
+    return await supabase
+        .from('dogs')
+        .select('id, dog_name, dog_ala')
+        .eq('id', id)
+        .maybeSingle();
+  }
+  Widget buildHeroBanner() {
+    return FutureBuilder<Map<String, dynamic>?>(
+      future: _getHeroPhoto(),
+      builder: (context, snapshot) {
 
-  Future saveChanges() async {
+        final screenWidth = MediaQuery.of(context).size.width;
+        final heroWidth = screenWidth * 0.4;
+        final heroHeight = heroWidth * 1.1;    // portrait feel
 
-    await supabase.from('dogs').update({
+        String? imageUrl;
 
-      'dog_name': nameController.text,
-      'dog_ala': alaController.text,
-      'microchip': microchipController.text,
-      'dog_type': selectedDogType,
-      'sex': selectedSex,
-      'desexed': selectedDesexed,
-      'mother_id': selectedMotherId,
-      'father_id': selectedFatherId,
-      'people_id': selectedOwnerId,
-      'spay_due': selectedSpayDue?.toIso8601String()
+        if (snapshot.hasData && snapshot.data != null) {
+          final hero = snapshot.data!;
+          final ala = dog!['dog_ala'];
+          imageUrl = supabase.storage
+              .from('dog_files')
+              .getPublicUrl('$ala/photos/${hero['url']}');
+        }
 
-    }).eq('id', dog!['id']);
-
-    editMode = false;
-
-    await loadDog();
+        return Padding(
+          padding: const EdgeInsets.only(top: 16, bottom: 16),
+          child: Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                width: heroWidth,
+                height: heroHeight,
+                color: Colors.grey.shade300,
+                child: imageUrl != null
+                    ? Image.network(
+                        imageUrl,
+                        fit: BoxFit.cover,
+                      )
+                    : const Icon(Icons.pets, size: 50),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
-  void cancelChanges(){
+  Widget buildInfoCard() {
+    final age = calculateAge(dog?['dob']);
 
-    dog = Map<String,dynamic>.from(originalDog!);
-    editMode = false;
-    loadDog();
-  }
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
 
-  Future confirmSave() async {
-
-    final result = await showDialog(
-
-      context: context,
-
-      builder:(_)=>AlertDialog(
-
-        title:const Text("Save changes?"),
-
-        actions:[
-
-          TextButton(
-            child:const Text("Cancel Changes"),
-            onPressed:()=>Navigator.pop(context,"cancel"),
+        
+// spay chip
+          Text(
+            "Age: $age",
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+            ),
           ),
 
-          TextButton(
-            child:const Text("Continue Editing"),
-            onPressed:()=>Navigator.pop(context,"continue"),
+          buildSpayChip(),
+
+          const SizedBox(height: 8),
+// spay chip above 
+          const SizedBox(height: 8),
+
+          Text("ALA: ${dog?['dog_ala'] ?? ''}"),
+          const SizedBox(height: 8),
+          editMode
+          ? TextField(controller: microchipController)
+          : Text("Microchip: ${dog?['microchip'] ?? ''}"),
+
+          const SizedBox(height: 20),
+
+          // MOTHER
+          FutureBuilder<Map<String, dynamic>?>(
+            future: getDogById(dog?['mother_id']),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData || snapshot.data == null) {
+                return const Text("Mother: -");
+              }
+
+              final mother = snapshot.data!;
+              return GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          DogDetailsPage(dogId: mother['id']),
+                    ),
+                  );
+                },
+                child: Text(
+                  "Mother: ${mother['dog_name']} (${mother['dog_ala']})",
+                  style: const TextStyle(
+                    color: Colors.teal,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              );
+            },
           ),
 
-          ElevatedButton(
-            child:const Text("Save Changes"),
-            onPressed:()=>Navigator.pop(context,"save"),
+          const SizedBox(height: 8),
+
+          // FATHER
+          FutureBuilder<Map<String, dynamic>?>(
+            future: getDogById(dog?['father_id']),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData || snapshot.data == null) {
+                return const Text("Father: -");
+              }
+
+              final father = snapshot.data!;
+              return GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          DogDetailsPage(dogId: father['id']),
+                    ),
+                  );
+                },
+                child: Text(
+                  "Father: ${father['dog_name']} (${father['dog_ala']})",
+                  style: const TextStyle(
+                    color: Colors.teal,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),
     );
-
-    if(result=="save") await saveChanges();
-
-    if(result=="cancel") cancelChanges();
   }
 
-  Future pickHeroImage() async {
+  @override
+  Widget build(BuildContext context) {
+    if (loading || dog == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
 
-    final picker = ImagePicker();
-
-    final file = await picker.pickImage(source: ImageSource.gallery);
-
-    if (file == null) return;
-
-    final fileName = file.name;
-
-    final storagePath =
-        "${dog!['id']}/${dog!['dog_ala']}/photo/$fileName";
-
-    // Upload to Supabase Storage
-    await supabase.storage
-        .from('dog_files')
-        .upload(storagePath, File(file.path),
-        fileOptions: const FileOptions(upsert: true));
-
-    // Save ONLY filename in database
-    await supabase
-        .from('dog_photos')
-        .insert({
-          'dog_id': dog!['id'],
-          'url': fileName,
-          'description': dog!['dog_name']
-        });
-
-    await loadDog();
-  }
-
-  Future<String?> bottomSheetSelector({
-    required String title,
-    required List<Map<String,dynamic>> list,
-    required String field,
-    required String idField,
-  }) async {
-
-    String search="";
-
-    return await showModalBottomSheet<String>(
-
-      context: context,
-      isScrollControlled:true,
-
-      builder:(context){
-
-        return StatefulBuilder(
-
-          builder:(context,setModalState){
-
-            final filtered=list.where((e)=>
-                e[field].toString().toLowerCase().contains(search.toLowerCase())
-            ).toList();
-
-            return Padding(
-
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom
+    return DefaultTabController(
+      length: 4,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(dog!['dog_name'] ?? ''),
+          centerTitle: true,
+          actions: [
+            if (editMode)
+              IconButton(
+                icon: const Icon(Icons.save),
+                onPressed: () async {
+                  await saveChanges();
+                  setState(() => editMode = false);
+                },
               ),
+            IconButton(
+              icon: Icon(editMode ? Icons.close : Icons.edit),
+              onPressed: () {
+                setState(() {
+                  editMode = !editMode;
+                });
+              },
+            ),
+          ],
+        ),
+        body: Column(
+          children: [
 
+            // TOP HALF (scrollable)
+            Expanded(
+              flex: 1, // 50%
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    buildHeroBanner(),
+                    const SizedBox(height: 12),
+                    buildInfoCard(),
+                    const SizedBox(height: 20),
+                  ],
+                ),
+              ),
+            ),
+
+            // BOTTOM HALF (tabs + content)
+            Expanded(
+              flex: 1, // 50%
               child: Column(
+                children: [
 
-                mainAxisSize: MainAxisSize.min,
-
-                children:[
-
-                  Text(title, style:const TextStyle(fontSize:18,fontWeight:FontWeight.bold)),
-
-                  TextField(
-                    decoration:const InputDecoration(hintText:"Search..."),
-                    onChanged:(v)=>setModalState(()=>search=v),
+                  const TabBar(
+                    labelColor: Colors.teal,
+                    unselectedLabelColor: Colors.grey,
+                    indicatorColor: Colors.teal,
+                    tabs: [
+                      Tab(text: "Photos"),
+                      Tab(text: "Files"),
+                      Tab(text: "Notes"),
+                      Tab(text: "Correspondence"),
+                    ],
                   ),
 
-                  SizedBox(
-                    height:400,
-                    child:ListView.builder(
-
-                      itemCount:filtered.length,
-
-                      itemBuilder:(context,index){
-
-                        final item=filtered[index];
-
-                        return ListTile(
-                          title:Text(item[field]),
-                          onTap:()=>Navigator.pop(context,item[idField].toString()),
-                        );
-                      },
+                  Expanded(
+                    child: TabBarView(
+                      children: [
+                        DogPhotosTab(
+                          dogId: dog!['id'].toString(),
+                          dogAla: dog!['dog_ala'] ?? '',
+                          onHeroChanged: () => setState(() {}),
+                        ),
+                        DogFilesTab(dogId: dog!['id']),
+                        DogNotesTab(dogId: dog!['id']),
+                        DogCorrespondenceTab(dogId: dog!['id']),
+                      ],
                     ),
                   ),
                 ],
               ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget selectorField({
-    required String label,
-    required String? valueId,
-    required List<Map<String,dynamic>> list,
-    required String field,
-    required String idField,
-    required Function(String?) onSelected,
-  }){
-
-    final text=list.firstWhere(
-        (e)=>e[idField].toString()==valueId,
-        orElse:()=>{field:""})[field];
-
-    if(!editMode){
-      return Text("$label: $text");
-    }
-
-    return ListTile(
-      title:Text(label),
-      subtitle:Text(text ?? "Select"),
-      onTap:() async {
-
-        final result=await bottomSheetSelector(
-            title:label,
-            list:list,
-            field:field,
-            idField:idField
-        );
-
-        if(result!=null) onSelected(result);
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context){
-
-    if(loading){
-      return const Scaffold(body:Center(child:CircularProgressIndicator()));
-    }
-
-    return DefaultTabController(
-
-      length:4,
-
-      child:Scaffold(
-
-        appBar:AppBar(
-
-          title:Text(nameController.text),
-
-          actions:[
-
-            IconButton(
-
-              icon:Icon(dog!['locked']?Icons.lock:Icons.lock_open),
-
-              onPressed:() async {
-
-                if(!dog!['locked'] && editMode){
-
-                  await confirmSave();
-                }
-
-                await DogLockService.toggleLock(
-                    dogId:dog!['id'],
-                    locked:dog!['locked']
-                );
-
-                await loadDog();
-              },
-            ),
-
-            IconButton(
-
-              icon:const Icon(Icons.edit),
-
-              onPressed:dog!['locked']?null:(){
-
-                editMode=!editMode;
-                setState((){});
-              },
             ),
           ],
         ),
-
-        body:SingleChildScrollView(
-          child:Column(
-            children:[
-
-              if (heroImageUrl != null)
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        maxHeight: 300,
-                      ),
-                      child: Image.network(
-                        "https://phkwizyrpfzoecugpshb.supabase.co/storage/v1/object/public/dog_files/${dog!['id']}/${dog!['dog_ala']}/photo/hero.jpg?v=$heroImageVersion",
-
-                        height: 250,
-                        width: double.infinity,
-
-                        fit: BoxFit.contain,
-
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            height: 250,
-                            color: Colors.grey[200],
-                            child: const Icon(Icons.pets, size: 80),
-                          );
-                        },
-                      )
-                  ),
-                ),
-              ),
-
-
-
-            Padding(
-
-              padding:const EdgeInsets.all(12),
-
-              child:Column(
-
-                crossAxisAlignment:CrossAxisAlignment.start,
-
-                children:[
-
-                  editMode
-                      ? TextField(controller:nameController)
-                      : Text("Name: ${nameController.text}"),
-
-                  editMode
-                      ? TextField(controller:alaController)
-                      : Text("ALA: ${alaController.text}"),
-
-                  editMode
-                      ? TextField(controller:microchipController)
-                      : Text("Microchip: ${microchipController.text}"),
-
-                  selectorField(
-                      label:"Mother",
-                      valueId:selectedMotherId,
-                      list:allDogs,
-                      field:"dog_name",
-                      idField:"id",
-                      onSelected:(v)=>setState(()=>selectedMotherId=v)
-                  ),
-
-                  selectorField(
-                      label:"Father",
-                      valueId:selectedFatherId,
-                      list:allDogs,
-                      field:"dog_name",
-                      idField:"id",
-                      onSelected:(v)=>setState(()=>selectedFatherId=v)
-                  ),
-
-                  selectorField(
-                      label:"Owner",
-                      valueId:selectedOwnerId,
-                      list:allPeople,
-                      field:"first_name_1st",
-                      idField:"people_id",
-                      onSelected:(v)=>setState(()=>selectedOwnerId=v)
-                  ),
-
-                  SpayStatusCard(dog:dog!, onUpdated:loadDog),
-                ],
-              ),
-            ),
-
-            const TabBar(
-              tabs:[
-                Tab(text:"Photos"),
-                Tab(text:"Files"),
-                Tab(text:"Notes"),
-                Tab(text:"Correspondence"),
-              ],
-            ),
-
-            SizedBox(
-              height: 500,
-              child: TabBarView(
-
-                children:[
-                  DogPhotosTab(
-                    dogId: dog!['id'].toString(),
-                    dogAla: dog!['dog_ala'] ?? '',
-                    onHeroChanged: () {
-                      setState(() {
-                        heroImageVersion =
-                            DateTime.now().millisecondsSinceEpoch;
-                      });
-                    },
-                  ),
-                  DogFilesTab(dogId:dog!['id']),
-                  DogNotesTab(dogId:dog!['id']),
-                  DogCorrespondenceTab(dogId:dog!['id']),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
       ),
     );
   }

@@ -49,48 +49,6 @@ class _PhotoViewerPageState extends State<PhotoViewerPage> {
     }
   }
 
-  Future<void> setHeroImage() async {
-
-    try {
-
-      final fileName = widget.photo['url'];
-
-      final sourcePath =
-          "${widget.dogId}/${widget.dogAla}/photo/$fileName";
-
-      final heroPath =
-          "${widget.dogId}/${widget.dogAla}/photo/hero.jpg";
-
-      final bytes = await supabase.storage
-          .from('dog_files')
-          .download(sourcePath);
-
-      await supabase.storage
-          .from('dog_files')
-          .uploadBinary(
-            heroPath,
-            bytes,
-            fileOptions: const FileOptions(
-              upsert: true,
-              contentType: 'image/jpeg',
-            ),
-          );
-
-      if (!mounted) return;
-
-      Navigator.pop(context, true);
-
-    } catch (e) {
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Hero update failed: $e"),
-        ),
-      );
-
-    }
-  }
-
   Future<void> editDescription() async {
 
     final controller = TextEditingController(
@@ -189,10 +147,6 @@ class _PhotoViewerPageState extends State<PhotoViewerPage> {
             onPressed: editDescription,
           ),
 
-          IconButton(
-            icon: const Icon(Icons.star),
-            onPressed: setHeroImage,
-          ),
 
           IconButton(
             icon: const Icon(Icons.share),
