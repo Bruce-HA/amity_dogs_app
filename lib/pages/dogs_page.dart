@@ -172,6 +172,10 @@ class _DogsPageState extends State<DogsPage> {
     final age = calculateAge(dog['dob']);
     final heroFile = heroMap[dog['id']];
     final ala = dog['dog_ala'];
+    
+    final sex = dog['sex'];
+    final isFemale = sex == 'Female';
+    final isMale = sex == 'Male';
 
     Widget leadingWidget;
 
@@ -196,12 +200,28 @@ class _DogsPageState extends State<DogsPage> {
           const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: ListTile(
         leading: leadingWidget,
-        title: Text(
-          dog['dog_name'] ?? '',
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
+        title: Row(
+          children: [
+
+            Expanded(
+              child: Text(
+                dog['dog_name'] ?? '',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+
+            if (isFemale) ...[
+              const SizedBox(width: 6),
+              const Icon(Icons.female, color: Colors.pink, size: 17),
+            ],
+
+            if (isMale) ...[
+              const SizedBox(width: 6),
+              const Icon(Icons.male, color: Colors.blue, size: 17),
+            ],
+
+          ],
         ),
         subtitle: Column(
           crossAxisAlignment:
@@ -278,6 +298,8 @@ class _DogsPageState extends State<DogsPage> {
             itemCount: filteredDogs.length,
             itemBuilder: (_, i) =>
                 buildDogTile(filteredDogs[i]),
+
+                
           ),
         ),
       ],

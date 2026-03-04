@@ -117,7 +117,7 @@ class _DashboardPageState extends State<DashboardPage>
             children: [
               Expanded(
                 child: buildTabButton(
-                  icon: Icons.calendar_today,
+                  icon: Icons.calendar_month,
                   label: "Calendar",
                   tabIndex: 3,
                 ),
